@@ -98,10 +98,3 @@ Edit the `example_schema.json` file to customize your form structure.
 ## 📝 License
 
 GNU Affero General Public License v3.0
-
----
-
-## 🙌 Credits
-
-Built using PySide6, JSON Schema, and caffeine.
-And maybe a little AI.
