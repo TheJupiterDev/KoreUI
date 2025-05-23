@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/TheJupiterDev/KoreUI/blob/main/assets/logo.png" alt="KoreUI Logo" height="1024" />
+  <img src="https://github.com/TheJupiterDev/KoreUI/blob/main/assets/logo.png" alt="KoreUI Logo" height="512" />
 </p>
 
 <h1 align="center">KoreUI</h1>
