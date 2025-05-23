@@ -97,7 +97,7 @@ Edit the `example_schema.json` file to customize your form structure.
 
 ## 📝 License
 
-MIT License — free for personal and commercial use.
+GNU Affero General Public License v3.0
 
 ---
 
