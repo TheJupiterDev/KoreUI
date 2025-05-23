@@ -708,38 +708,25 @@ class ArrayWidget(BaseFormWidget):
         item_container = QWidget()
         item_layout = QHBoxLayout(item_container)
         
-        # Create widget for item
+        # Create widget for item - handle oneOf/anyOf items properly
         item_widget = SchemaWidgetFactory.create_widget(
             item_schema, self.resolver, self.validator, f"{self.path}[{index}]"
         )
         
-        # Set value if provided, with proper type checking
+        # Set value if provided
         if value is not None:
             try:
-                expected_type = item_schema.get("type")
-                
-                # Handle type conversion based on schema
-                if expected_type == "object" and not isinstance(value, dict):
-                    if isinstance(value, bool):
-                        # Don't try to set boolean values on object widgets
-                        value = {}
-                    else:
-                        value = {}
-                elif expected_type == "array" and not isinstance(value, list):
-                    value = []
-                elif expected_type == "string" and not isinstance(value, str):
-                    value = str(value) if not isinstance(value, (dict, list)) else ""
-                elif expected_type == "boolean" and not isinstance(value, bool):
-                    value = bool(value) if not isinstance(value, (dict, list)) else False
-                elif expected_type in ["integer", "number"] and not isinstance(value, (int, float)):
-                    try:
-                        value = float(value) if expected_type == "number" else int(value)
-                    except (ValueError, TypeError):
-                        value = 0
-                        
+                # For oneOf/anyOf widgets, let them handle the value matching
                 item_widget.set_value(value)
             except Exception as e:
                 print(f"Warning: Could not set default value {value}: {e}")
+                
+                # Fallback: try to convert based on schema type
+                try:
+                    converted_value = self._convert_value_for_schema(value, item_schema)
+                    item_widget.set_value(converted_value)
+                except Exception as e2:
+                    print(f"Warning: Could not convert value {value}: {e2}")
         
         # Remove button
         remove_button = QPushButton("−")
@@ -857,10 +844,10 @@ class ObjectWidget(BaseFormWidget):
                 
             layout.addWidget(label)
             
-            # Create widget for property - PASS PARENT VALUE PROVIDER for conditionals
+            # Create widget for property
             prop_widget = SchemaWidgetFactory.create_widget(
                 prop_schema, self.resolver, self.validator, prop_path,
-                parent_value_provider=self.get_value  # This enables conditional evaluation
+                parent_value_provider=lambda: self.get_value()
             )
             
             layout.addWidget(prop_widget)
@@ -947,7 +934,8 @@ class OneOfWidget(BaseFormWidget):
         # Create widgets for each option
         for i, option in enumerate(options):
             option_widget = SchemaWidgetFactory.create_widget(
-                option, self.resolver, self.validator, f"{path}/oneOf[{i}]"
+                option, self.resolver, self.validator, f"{path}/oneOf[{i}]",
+                parent_value_provider=lambda: self.get_value()
             )
             self.option_widgets.append(option_widget)
             self.stacked_widget.addWidget(option_widget)
@@ -991,16 +979,38 @@ class OneOfWidget(BaseFormWidget):
         return None
         
     def set_value(self, value: Any):
-        # Try to find which option matches the value
+        """Set value by finding the best matching option"""
+        best_match_index = 0
+        best_match_score = float('inf')
+        
+        # Try each option to find the best match
         for i, widget in enumerate(self.option_widgets):
             try:
+                # Test if this widget can handle the value
                 widget.set_value(value)
                 errors = widget.validate_value()
-                if not errors:
+                error_score = len(errors)
+                
+                # Prefer options with fewer validation errors
+                if error_score < best_match_score:
+                    best_match_score = error_score
+                    best_match_index = i
+                    
+                # If we find a perfect match, use it immediately
+                if error_score == 0:
                     self.selector.setCurrentIndex(i)
                     return
-            except:
+                    
+            except Exception as e:
+                # This option can't handle the value type
                 continue
+        
+        # Use the best match we found
+        self.selector.setCurrentIndex(best_match_index)
+        try:
+            self.option_widgets[best_match_index].set_value(value)
+        except:
+            pass
 
 
 class AnyOfWidget(BaseFormWidget):
@@ -1038,7 +1048,8 @@ class AnyOfWidget(BaseFormWidget):
                 
             checkbox = QCheckBox(title)
             option_widget = SchemaWidgetFactory.create_widget(
-                option, self.resolver, self.validator, f"{path}/anyOf[{i}]"
+                option, self.resolver, self.validator, f"{path}/anyOf[{i}]",
+                parent_value_provider=lambda: self.get_value()
             )
             
             # Initially hidden
@@ -1141,78 +1152,80 @@ class ConditionalWidget(BaseFormWidget):
         self._condition_state = None
         self._current_value = None
         
-        # For object properties, we need the parent to provide context
-        if not self.parent_value_provider:
-            # Create a default widget (use 'else' if available, otherwise 'then')
-            default_schema = self.else_schema if self.else_schema else self.then_schema
-            if default_schema:
-                self._create_widget(default_schema)
-        else:
-            self._build_ui()
-            
-            # Set up timer for live monitoring of parent data
+        # Create initial widget
+        self._evaluate_and_build()
+        
+        # For object properties, monitor parent changes
+        if self.parent_value_provider:
             self.timer = QTimer(self)
-            self.timer.setInterval(200)  # Check every 200ms
+            self.timer.setInterval(100)  # Check every 100ms
             self.timer.timeout.connect(self._check_condition)
             self.timer.start()
     
+    def _evaluate_condition(self, data: Any) -> bool:
+        """Evaluate the if condition against data"""
+        try:
+            if_errors = self.validator.validate(data, self.if_schema)
+            return len(if_errors) == 0
+        except:
+            return False
+    
     def _check_condition(self):
-        """Check if condition state has changed and rebuild UI if necessary"""
+        """Check if condition state has changed"""
         if not self.parent_value_provider:
             return
             
         try:
             parent_data = self.parent_value_provider()
-            # Evaluate the 'if' condition against parent data
-            if_errors = self.validator.validate(parent_data, self.if_schema)
-            condition_met = len(if_errors) == 0
+            condition_met = self._evaluate_condition(parent_data)
             
-            # Only rebuild if condition state changed
             if condition_met != self._condition_state:
                 self._condition_state = condition_met
-                self._build_ui()
+                self._evaluate_and_build()
         except Exception as e:
             print(f"Error checking condition: {e}")
     
-    def _build_ui(self):
-        """Build the UI based on current condition state"""
-        # Determine which schema to use
+    def _evaluate_and_build(self):
+        """Evaluate condition and build appropriate UI"""
+        # Determine condition state if we have parent data
+        if self.parent_value_provider:
+            try:
+                parent_data = self.parent_value_provider()
+                self._condition_state = self._evaluate_condition(parent_data)
+            except:
+                self._condition_state = None
+        
+        # Choose schema based on condition
         if self._condition_state is True and self.then_schema:
             selected_schema = self.then_schema
         elif self._condition_state is False and self.else_schema:
             selected_schema = self.else_schema
-        elif self.then_schema:
-            # Default to 'then' if no 'else' is specified
+        elif self.then_schema:  # Default fallback
             selected_schema = self.then_schema
         elif self.else_schema:
-            # Default to 'else' if no 'then' is specified
             selected_schema = self.else_schema
         else:
-            # No conditional schemas available
-            return
+            # Create empty widget
+            selected_schema = {"type": "object", "properties": {}}
         
         self._create_widget(selected_schema)
     
     def _create_widget(self, schema: Dict[str, Any]):
         """Create widget for the given schema"""
-        # Store current value before switching
+        # Store current value
         if self.active_widget:
             try:
                 self._current_value = self.active_widget.get_value()
             except:
-                self._current_value = None
+                pass
             
             # Remove old widget
             self.layout.removeWidget(self.active_widget)
             self.active_widget.deleteLater()
-            self.active_widget = None
-        
-        # Resolve the schema
-        resolved_schema = self.resolver.resolve_schema(schema)
         
         # Create new widget
         self.active_widget = SchemaWidgetFactory.create_widget(
-            resolved_schema, self.resolver, self.validator, self.path,
+            schema, self.resolver, self.validator, self.path,
             parent_value_provider=self.parent_value_provider
         )
         
@@ -1223,32 +1236,23 @@ class ConditionalWidget(BaseFormWidget):
             try:
                 self.active_widget.set_value(self._current_value)
             except:
-                pass  # Value not compatible with new widget type
+                pass
         
-        # Connect signals
         self.active_widget.valueChanged.connect(self.update_validation)
         self.update_validation()
 
     def get_value(self) -> Any:
-        """Get current value from active widget"""
         if self.active_widget:
             return self.active_widget.get_value()
         return None
 
     def set_value(self, value: Any):
-        """Set value on active widget"""
         self._current_value = value
         if self.active_widget:
             try:
                 self.active_widget.set_value(value)
-            except Exception as e:
-                print(f"Error setting value on conditional widget: {e}")
-
-    def validate_value(self) -> List[ValidationError]:
-        """Validate current value"""
-        if self.active_widget:
-            return self.active_widget.validate_value()
-        return []
+            except:
+                pass
 
 
 class SchemaWidgetFactory:
