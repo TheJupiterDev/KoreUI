@@ -41,7 +41,7 @@ class SchemaResolver:
     def __init__(self, root_schema: Dict[str, Any]):
         self.root_schema = root_schema
         self.refs_cache = {}
-        self.resolution_stack = []  # Prevent infinite recursion
+        self.resolution_stack = []
         
     def resolve_schema(self, schema: Union[Dict[str, Any], bool], current_path: str = "#") -> Dict[str, Any]:
         """Resolve a schema, handling all JSON Schema composition keywords"""
@@ -50,6 +50,9 @@ class SchemaResolver:
             
         if not isinstance(schema, dict):
             return {}
+        
+        if "if" in schema:
+            return schema
             
         # Handle $ref
         if "$ref" in schema:
@@ -61,11 +64,6 @@ class SchemaResolver:
         # Handle allOf
         if "allOf" in schema:
             resolved = self._merge_all_of(schema["allOf"], resolved, current_path)
-            
-        # Handle anyOf/oneOf (keep as-is for widget creation)
-        # Handle if/then/else
-        if "if" in schema:
-            resolved = self._resolve_conditional(schema, resolved, current_path)
             
         return resolved
         
@@ -810,6 +808,7 @@ class ObjectWidget(BaseFormWidget):
         super().__init__(schema, resolver, validator, path)
         
         self.property_widgets = {}
+        self.conditional_widgets = []
         
         layout = QVBoxLayout(self)
         
@@ -818,7 +817,6 @@ class ObjectWidget(BaseFormWidget):
         required = schema.get("required", [])
         
         if not properties:
-            # Show message for empty objects
             empty_label = QLabel("(No properties defined)")
             empty_label.setStyleSheet("color: gray; font-style: italic;")
             layout.addWidget(empty_label)
@@ -826,16 +824,12 @@ class ObjectWidget(BaseFormWidget):
         for prop_name, prop_schema in properties.items():
             prop_path = f"{path}.{prop_name}" if path else prop_name
             
-            # Create better label text
             label_text = self._get_property_label(prop_name, prop_schema, prop_name in required)
-                
             label = QLabel(label_text)
             
-            label.setProperty("class", "property-label")
             if prop_name in required:
                 label.setProperty("class", "required")
                 
-            # Add description if available
             if "description" in prop_schema:
                 desc_label = QLabel(prop_schema["description"])
                 desc_label.setStyleSheet("color: gray; font-size: 10px; font-style: italic; margin-bottom: 5px;")
@@ -853,8 +847,12 @@ class ObjectWidget(BaseFormWidget):
             layout.addWidget(prop_widget)
             self.property_widgets[prop_name] = prop_widget
             
-            prop_widget.valueChanged.connect(self.update_validation)
+            # Track conditional widgets
+            if isinstance(prop_widget, ConditionalWidget):
+                self.conditional_widgets.append(prop_widget)
             
+            prop_widget.valueChanged.connect(self._on_property_changed)
+        
         layout.addWidget(self.error_widget)
         
         # Set default values
@@ -863,12 +861,21 @@ class ObjectWidget(BaseFormWidget):
                 if prop_name in self.property_widgets:
                     self.property_widgets[prop_name].set_value(value)
     
+    def _on_property_changed(self):
+        """Handle property value changes and update conditionals"""
+        # Update all conditional child widgets
+        current_data = self.get_value()
+        for conditional_widget in self.conditional_widgets:
+            conditional_widget.update_condition(current_data)
+        
+        # Emit our own change signal
+        self.update_validation()
+    
     def _get_property_label(self, prop_name: str, prop_schema: Dict[str, Any], is_required: bool) -> str:
         """Generate a meaningful label for a property"""
         if "title" in prop_schema:
             label_text = prop_schema["title"]
         else:
-            # Convert snake_case to Title Case
             label_text = prop_name.replace('_', ' ').title()
         
         if is_required:
@@ -879,13 +886,27 @@ class ObjectWidget(BaseFormWidget):
     def get_value(self) -> Dict[str, Any]:
         result = {}
         for prop_name, widget in self.property_widgets.items():
-            result[prop_name] = widget.get_value()
+            try:
+                result[prop_name] = widget.get_value()
+            except Exception as e:
+                print(f"Error getting value for {prop_name}: {e}")
+                result[prop_name] = None
         return result
         
     def set_value(self, value: Dict[str, Any]):
+        if not isinstance(value, dict):
+            return
+            
         for prop_name, prop_value in value.items():
             if prop_name in self.property_widgets:
-                self.property_widgets[prop_name].set_value(prop_value)
+                try:
+                    self.property_widgets[prop_name].set_value(prop_value)
+                except Exception as e:
+                    print(f"Error setting value for {prop_name}: {e}")
+        
+        # Update conditionals after setting values
+        for conditional_widget in self.conditional_widgets:
+            conditional_widget.update_condition(value)
 
 
 class OneOfWidget(BaseFormWidget):
@@ -1136,7 +1157,7 @@ class AllOfWidget(BaseFormWidget):
 
 
 class ConditionalWidget(BaseFormWidget):
-    """Widget that renders then/else based on runtime evaluation of if condition"""
+    """Conditional handler"""
     
     def __init__(self, schema: Dict[str, Any], resolver: SchemaResolver, validator: SchemaValidator,
                  path: str = "", parent_value_provider: Optional[Callable[[], Any]] = None):
@@ -1149,95 +1170,115 @@ class ConditionalWidget(BaseFormWidget):
         
         self.layout = QVBoxLayout(self)
         self.active_widget = None
-        self._condition_state = None
         self._current_value = None
         
-        # Create initial widget
-        self._evaluate_and_build()
+        # Start with a default widget
+        self._create_default_widget()
         
-        # For object properties, monitor parent changes
+        # Set up monitoring if we have a parent value provider
         if self.parent_value_provider:
-            self.timer = QTimer(self)
-            self.timer.setInterval(100)  # Check every 100ms
-            self.timer.timeout.connect(self._check_condition)
-            self.timer.start()
+            # Use a more efficient approach than timer
+            self._setup_parent_monitoring()
+    
+    def _create_default_widget(self):
+        """Create initial widget based on available schemas"""
+        # Choose the most appropriate default schema
+        if self.then_schema:
+            default_schema = self.then_schema
+        elif self.else_schema:
+            default_schema = self.else_schema
+        else:
+            # Create a minimal fallback
+            default_schema = {"type": "string", "title": "Conditional Field"}
+        
+        self._create_widget_for_schema(default_schema)
+    
+    def _setup_parent_monitoring(self):
+        """Set up efficient parent value monitoring"""
+        # Instead of timer, we'll rely on parent's valueChanged signals
+        # The parent should call our update method when its value changes
+        pass
+    
+    def update_condition(self, parent_data: Any = None):
+        """Update the widget based on current condition evaluation"""
+        if parent_data is None and self.parent_value_provider:
+            try:
+                parent_data = self.parent_value_provider()
+            except:
+                return
+        
+        # Evaluate condition
+        condition_met = self._evaluate_condition(parent_data) if parent_data is not None else None
+        
+        # Choose appropriate schema
+        if condition_met is True and self.then_schema:
+            target_schema = self.then_schema
+        elif condition_met is False and self.else_schema:
+            target_schema = self.else_schema
+        elif self.then_schema:  # Default to 'then' if condition can't be evaluated
+            target_schema = self.then_schema
+        elif self.else_schema:
+            target_schema = self.else_schema
+        else:
+            # No schemas available - create empty object
+            target_schema = {"type": "object", "properties": {}}
+        
+        # Only recreate widget if schema actually changed
+        current_schema = getattr(self, '_current_schema', None)
+        if current_schema != target_schema:
+            self._current_schema = target_schema
+            self._create_widget_for_schema(target_schema)
     
     def _evaluate_condition(self, data: Any) -> bool:
         """Evaluate the if condition against data"""
+        if not self.if_schema:
+            return True
+            
         try:
-            if_errors = self.validator.validate(data, self.if_schema)
-            return len(if_errors) == 0
-        except:
+            # Create a temporary validator for just this condition
+            temp_resolver = SchemaResolver(self.if_schema)
+            temp_validator = SchemaValidator(temp_resolver)
+            errors = temp_validator.validate(data, self.if_schema)
+            return len(errors) == 0
+        except Exception as e:
+            print(f"Condition evaluation error: {e}")
             return False
     
-    def _check_condition(self):
-        """Check if condition state has changed"""
-        if not self.parent_value_provider:
-            return
-            
-        try:
-            parent_data = self.parent_value_provider()
-            condition_met = self._evaluate_condition(parent_data)
-            
-            if condition_met != self._condition_state:
-                self._condition_state = condition_met
-                self._evaluate_and_build()
-        except Exception as e:
-            print(f"Error checking condition: {e}")
-    
-    def _evaluate_and_build(self):
-        """Evaluate condition and build appropriate UI"""
-        # Determine condition state if we have parent data
-        if self.parent_value_provider:
-            try:
-                parent_data = self.parent_value_provider()
-                self._condition_state = self._evaluate_condition(parent_data)
-            except:
-                self._condition_state = None
-        
-        # Choose schema based on condition
-        if self._condition_state is True and self.then_schema:
-            selected_schema = self.then_schema
-        elif self._condition_state is False and self.else_schema:
-            selected_schema = self.else_schema
-        elif self.then_schema:  # Default fallback
-            selected_schema = self.then_schema
-        elif self.else_schema:
-            selected_schema = self.else_schema
-        else:
-            # Create empty widget
-            selected_schema = {"type": "object", "properties": {}}
-        
-        self._create_widget(selected_schema)
-    
-    def _create_widget(self, schema: Dict[str, Any]):
+    def _create_widget_for_schema(self, schema: Dict[str, Any]):
         """Create widget for the given schema"""
-        # Store current value
+        # Preserve current value
         if self.active_widget:
             try:
                 self._current_value = self.active_widget.get_value()
             except:
                 pass
             
-            # Remove old widget
+            # Clean up old widget
             self.layout.removeWidget(self.active_widget)
             self.active_widget.deleteLater()
         
-        # Create new widget
-        self.active_widget = SchemaWidgetFactory.create_widget(
-            schema, self.resolver, self.validator, self.path,
-            parent_value_provider=self.parent_value_provider
-        )
+        # Create new widget - avoid infinite recursion by not passing parent_value_provider
+        # for nested conditionals
+        try:
+            self.active_widget = SchemaWidgetFactory.create_widget(
+                schema, self.resolver, self.validator, self.path
+            )
+        except Exception as e:
+            print(f"Error creating conditional widget: {e}")
+            # Fallback to simple string widget
+            fallback_schema = {"type": "string", "title": "Error: Conditional Failed"}
+            self.active_widget = StringWidget(fallback_schema, self.resolver, self.validator, self.path)
         
         self.layout.addWidget(self.active_widget)
         
-        # Restore value if compatible
+        # Restore value if possible
         if self._current_value is not None:
             try:
                 self.active_widget.set_value(self._current_value)
-            except:
-                pass
+            except Exception as e:
+                print(f"Could not restore value: {e}")
         
+        # Connect signals
         self.active_widget.valueChanged.connect(self.update_validation)
         self.update_validation()
 
@@ -1251,8 +1292,8 @@ class ConditionalWidget(BaseFormWidget):
         if self.active_widget:
             try:
                 self.active_widget.set_value(value)
-            except:
-                pass
+            except Exception as e:
+                print(f"Could not set conditional value: {e}")
 
 
 class SchemaWidgetFactory:
@@ -1265,65 +1306,92 @@ class SchemaWidgetFactory:
     def create_widget(schema: Dict[str, Any], resolver: SchemaResolver, 
                     validator: SchemaValidator, path: str = "", 
                     parent_value_provider: Optional[Callable[[], Any]] = None) -> BaseFormWidget:
-        """Create appropriate widget for schema"""
+        """Create appropriate widget for schema with better error handling"""
         
         # Handle boolean schemas
         if isinstance(schema, bool):
             schema = {"type": "object"} if schema else {"not": {}}
             
-        # Handle if/then/else conditionals FIRST (before resolving)
-        if "if" in schema:
-            return ConditionalWidget(schema, resolver, validator, path, parent_value_provider)
+        if not isinstance(schema, dict):
+            return ConstWidget({"const": "Invalid schema"}, resolver, validator, path)
         
-        # Resolve schema for other cases
-        resolved_schema = resolver.resolve_schema(schema)
+        try:
+            # Handle if/then/else conditionals FIRST
+            if "if" in schema:
+                return ConditionalWidget(schema, resolver, validator, path, parent_value_provider)
+            
+            # Resolve schema for other cases
+            resolved_schema = resolver.resolve_schema(schema)
+            
+            # Handle const
+            if "const" in resolved_schema:
+                return ConstWidget(resolved_schema, resolver, validator, path)
+                
+            # Handle enum
+            if "enum" in resolved_schema:
+                return EnumWidget(resolved_schema, resolver, validator, path)
+                
+            # Handle composition keywords BEFORE type resolution
+            if "oneOf" in schema:  # Use original schema
+                return OneOfWidget(schema, resolver, validator, path)
+                
+            if "anyOf" in schema:  # Use original schema
+                return AnyOfWidget(schema, resolver, validator, path)
+                
+            if "allOf" in schema:  # Use original schema
+                return AllOfWidget(schema, resolver, validator, path)
+                
+            # Handle type-based widgets
+            schema_type = resolved_schema.get("type")
+            
+            if schema_type == "string":
+                return StringWidget(resolved_schema, resolver, validator, path)
+            elif schema_type in ["integer", "number"]:
+                return NumberWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "boolean":
+                return BooleanWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "array":
+                return ArrayWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "object":
+                return ObjectWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "null":
+                return ConstWidget({"const": None}, resolver, validator, path)
+                
+            # Handle multiple types
+            if isinstance(schema_type, list):
+                type_schemas = []
+                for t in schema_type:
+                    type_schema = dict(resolved_schema)
+                    type_schema["type"] = t
+                    type_schemas.append(type_schema)
+                multi_type_schema = {"oneOf": type_schemas}
+                return OneOfWidget(multi_type_schema, resolver, validator, path)
+            
+            # Better fallback for schemas without explicit type
+            if not schema_type:
+                # Try to infer from other properties
+                if "properties" in resolved_schema:
+                    inferred_schema = dict(resolved_schema)
+                    inferred_schema["type"] = "object"
+                    return ObjectWidget(inferred_schema, resolver, validator, path)
+                elif "items" in resolved_schema:
+                    inferred_schema = dict(resolved_schema)
+                    inferred_schema["type"] = "array"
+                    return ArrayWidget(inferred_schema, resolver, validator, path)
+                elif "enum" in resolved_schema:
+                    return EnumWidget(resolved_schema, resolver, validator, path)
+                else:
+                    # Default to string input
+                    return StringWidget({"type": "string"}, resolver, validator, path)
+                    
+        except Exception as e:
+            print(f"Error creating widget for schema {schema}: {e}")
+            # Return error widget instead of crashing
+            error_schema = {"const": f"Schema Error: {str(e)}"}
+            return ConstWidget(error_schema, resolver, validator, path)
         
-        # Handle const
-        if "const" in resolved_schema:
-            return ConstWidget(resolved_schema, resolver, validator, path)
-            
-        # Handle enum
-        if "enum" in resolved_schema:
-            return EnumWidget(resolved_schema, resolver, validator, path)
-            
-        # Handle composition keywords BEFORE resolving allOf
-        if "oneOf" in schema:  # Use original schema, not resolved
-            return OneOfWidget(schema, resolver, validator, path)
-            
-        if "anyOf" in schema:  # Use original schema, not resolved
-            return AnyOfWidget(schema, resolver, validator, path)
-            
-        if "allOf" in schema:  # Use original schema, not resolved
-            return AllOfWidget(schema, resolver, validator, path)
-            
-        # Handle type-based widgets
-        schema_type = resolved_schema.get("type")
-        
-        if schema_type == "string":
-            return StringWidget(resolved_schema, resolver, validator, path)
-        elif schema_type in ["integer", "number"]:
-            return NumberWidget(resolved_schema, resolver, validator, path)
-        elif schema_type == "boolean":
-            return BooleanWidget(resolved_schema, resolver, validator, path)
-        elif schema_type == "array":
-            return ArrayWidget(resolved_schema, resolver, validator, path)
-        elif schema_type == "object":
-            return ObjectWidget(resolved_schema, resolver, validator, path)
-        elif schema_type == "null":
-            return ConstWidget({"const": None}, resolver, validator, path)
-            
-        # Handle multiple types
-        if isinstance(schema_type, list):
-            type_schemas = []
-            for t in schema_type:
-                type_schema = dict(resolved_schema)
-                type_schema["type"] = t
-                type_schemas.append(type_schema)
-            multi_type_schema = {"oneOf": type_schemas}
-            return OneOfWidget(multi_type_schema, resolver, validator, path)
-            
-        # Fallback
-        return ConstWidget({"const": "Unsupported schema"}, resolver, validator, path)
+        # Final fallback - should rarely reach here now
+        return StringWidget({"type": "string", "title": "Unknown Schema"}, resolver, validator, path)
 
 
 class JsonSchemaForm(QWidget):
