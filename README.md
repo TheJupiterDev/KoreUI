@@ -53,25 +53,34 @@ Edit the `example_schema.json` file to customize your form structure.
 ## 🧪 Example Schema
 ```json
 {
-    "type": "object",
-    "properties": {
-    "mode": {
-        "type": "string",
-        "enum": ["simple", "advanced"]
+  "title": "User Profile",
+  "type": "object",
+  "required": ["name", "age", "email"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "Full Name"
     },
-    "settings": {
-        "if": {
-        "properties": { "mode": { "const": "advanced" } }
-        },
-        "then": {
-        "properties": { "threshold": { "type": "number" } }
-        },
-        "else": {
-        "properties": { "notes": { "type": "string" } }
-        },
-        "type": "object"
+    "age": {
+      "type": "integer",
+      "title": "Age",
+      "minimum": 0
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "title": "Email Address"
+    },
+    "subscribe": {
+      "type": "boolean",
+      "title": "Subscribe to Newsletter"
+    },
+    "bio": {
+      "type": "string",
+      "title": "Short Bio",
+      "maxLength": 250
     }
-    }
+  }
 }
 ```
 
