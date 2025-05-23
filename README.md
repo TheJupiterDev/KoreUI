@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://user-images.githubusercontent.com/0000000/0000000-kore-logo.png" alt="KoreUI Logo" height="120" />
+  <img src="https://github.com/TheJupiterDev/KoreUI/blob/main/assets/logo.png" alt="KoreUI Logo" height="120" />
 </p>
 
 <h1 align="center">KoreUI</h1>
@@ -8,6 +8,10 @@
   <strong>Dynamic GUI Generator from JSON Schema</strong><br />
   Build fully-functional PySide6 interfaces from JSON Schema — including complex features like <code>if/then/else</code>, <code>allOf</code>, dynamic arrays, and real-time validation.
 </p>
+
+---
+
+> ⚠️ This project is still in pre alpha stages!
 
 ---
 
@@ -26,11 +30,11 @@
 
 Run the following:
 
-    pip install -r requirements.txt
+```pip install pyside6```
 
 Requirements:
 
-- Python 3.8+
+- Python 3.10+
 - PySide6
 
 ---
@@ -39,57 +43,45 @@ Requirements:
 
 To start the application:
 
-    python app.py
+```python app.py```
 
-Edit the `schema.json` file to customize your form structure.
+Edit the `example_schema.json` file to customize your form structure.
 
 ---
 
 ## 🧪 Example Schema
-
-    {
-      "type": "object",
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["simple", "advanced"]
+```json
+{
+    "type": "object",
+    "properties": {
+    "mode": {
+        "type": "string",
+        "enum": ["simple", "advanced"]
+    },
+    "settings": {
+        "if": {
+        "properties": { "mode": { "const": "advanced" } }
         },
-        "settings": {
-          "if": {
-            "properties": { "mode": { "const": "advanced" } }
-          },
-          "then": {
-            "properties": { "threshold": { "type": "number" } }
-          },
-          "else": {
-            "properties": { "notes": { "type": "string" } }
-          },
-          "type": "object"
-        }
-      }
+        "then": {
+        "properties": { "threshold": { "type": "number" } }
+        },
+        "else": {
+        "properties": { "notes": { "type": "string" } }
+        },
+        "type": "object"
     }
-
----
-
-## 📸 Screenshot
-
-*(Optional: include a screenshot of a rendered form here)*
+    }
+}
+```
 
 ---
 
 ## 🧱 Architecture
 
-- `koreui.py` – Core schema resolver, validator, and widget logic  
+- `src/koreui.py` – Core schema resolver, validator, and widget logic
+- `src/loader.py` – A helper script to load a Schema from a JSON
 - `app.py` – App entry point  
-- `schema.json` – Example JSON Schema used to render a dynamic form  
-
----
-
-## 🧩 Logo
-
-Replace the logo link at the top with your own hosted image or use one from your `assets/` folder. Example:
-
-    <img src="assets/logo.png" alt="KoreUI Logo" height="120" />
+- `example_schema.json` – Example JSON Schema used to render a dynamic form  
 
 ---
 
@@ -101,4 +93,5 @@ MIT License — free for personal and commercial use.
 
 ## 🙌 Credits
 
-Built with ❤️ using PySide6, JSON Schema, and caffeine.
+Built using PySide6, JSON Schema, and caffeine.
+And maybe a little AI.
