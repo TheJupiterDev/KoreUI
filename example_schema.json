@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Employee Record",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "employeeType": {
+      "type": "string",
+      "enum": ["full-time", "part-time", "contractor"]
+    },
+    "salary": {
+      "type": "number",
+      "minimum": 0
+    },
+    "hourlyRate": {
+      "type": "number",
+      "minimum": 0
+    },
+    "benefits": {
+      "type": "object",
+      "properties": {
+        "healthInsurance": {
+          "type": "boolean"
+        },
+        "retirement401k": {
+          "type": "boolean"
+        }
+      }
+    },
+    "contractEndDate": {
+      "type": "string",
+      "format": "date"
+    },
+    "department": {
+      "type": "string"
+    }
+  },
+  "required": ["name", "employeeType"],
+  "if": {
+    "properties": {
+      "employeeType": {
+        "const": "full-time"
+      }
+    }
+  },
+  "then": {
+    "required": ["salary", "benefits"],
+    "properties": {
+      "salary": {
+        "minimum": 30000
+      }
+    },
+    "not": {
+      "required": ["hourlyRate", "contractEndDate"]
+    }
+  },
+  "else": {
+    "if": {
+      "properties": {
+        "employeeType": {
+          "const": "part-time"
+        }
+      }
+    },
+    "then": {
+      "required": ["hourlyRate"],
+      "not": {
+        "required": ["salary", "contractEndDate"]
+      }
+    },
+    "else": {
+      "if": {
+        "properties": {
+          "employeeType": {
+            "const": "contractor"
+          }
+        }
+      },
+      "then": {
+        "required": ["hourlyRate", "contractEndDate"],
+        "not": {
+          "required": ["salary", "benefits"]
+        }
+      }
+    }
+  }
+}
