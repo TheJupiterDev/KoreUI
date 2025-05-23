@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/TheJupiterDev/KoreUI/blob/main/assets/logo.png" alt="KoreUI Logo" height="120" />
+  <img src="https://github.com/TheJupiterDev/KoreUI/blob/main/assets/logo.png" alt="KoreUI Logo" height="1024" />
 </p>
 
 <h1 align="center">KoreUI</h1>
@@ -17,12 +17,13 @@
 
 ## 🚀 Features
 
-- 📄 Full support for JSON Schema Draft 2020-12  
+- 📄 Full support for JSON Schema Draft 2020-12*
 - 🧩 Handles `if` / `then` / `else`, `allOf`, `anyOf`, `oneOf`, `$ref`, and more  
 - 🧠 Live conditionals — forms change in real-time based on inputs  
 - 🛠️ Built-in validation with contextual error messages  
-- 🧼 Modern, dark-themed UI with PySide6  
 - 🧪 Ideal for form builders, config tools, admin panels, or low-code platforms  
+
+-# *Soon. When the Beta releases, it will comply.
 
 ---
 
