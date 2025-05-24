@@ -1,47 +1,43 @@
 {
-  "title": "Pet Registration",
   "type": "object",
   "properties": {
-    "pet_type": {
-      "type": "string",
-      "enum": ["dog", "cat"],
-      "title": "Pet Type"
-    },
-    "details": {
-      "title": "Details",
+    "mode": { "type": "string", "enum": ["basic", "advanced"] },
+    "settings": {
+      "type": "object",
       "if": {
-        "properties": {
-          "pet_type": { "const": "dog" }
-        }
+        "properties": { "mode": { "const": "advanced" } },
+        "required": ["mode"]
       },
       "then": {
         "properties": {
-          "breed": {
-            "type": "string",
-            "title": "Dog Breed"
-          },
-          "trained": {
-            "type": "boolean",
-            "title": "Trained?"
+          "advancedOptions": {
+            "type": "object",
+            "properties": {
+              "enableFeatureX": { "type": "boolean" }
+            },
+            "if": {
+              "properties": {"enableFeatureX": {"const": true}},
+              "required": ["enableFeatureX"]
+            },
+            "then": {
+              "properties": {
+                "notetwo": {
+                  "type": "string",
+                  "title": "TEST"
+                }
+              }
+            },
+            "else": {
+              "properties": {"":""}
+            }
           }
-        },
-        "required": ["breed"]
+        }
       },
       "else": {
         "properties": {
-          "indoor": {
-            "type": "boolean",
-            "title": "Indoor Cat?"
-          },
-          "color": {
-            "type": "string",
-            "title": "Fur Color"
-          }
-        },
-        "required": ["indoor"]
-      },
-      "type": "object"
+          "note": { "type": "string" }
+        }
+      }
     }
-  },
-  "required": ["pet_type"]
+  }
 }
