@@ -23,7 +23,7 @@
 - 🛠️ Built-in validation with contextual error messages  
 - 🧪 Ideal for form builders, config tools, admin panels, or low-code platforms  
 
-###### *Soon. When the Beta releases, it will comply.
+###### *Soon. Denser schemas may or may not fail- this is being looked into.
 
 ---
 
