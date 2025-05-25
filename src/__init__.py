@@ -1,18 +1,9 @@
-from .kore import (
-    JsonSchemaForm,
-    SchemaResolver,
-    SchemaValidator,
-    ValidationError
-)
-from .loader import load_schema, load_schema_with_defaults
+from .kore import JsonSchemaForm
+from .loader import load_schema
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "JsonSchemaForm",
-    "SchemaResolver", 
-    "SchemaValidator",
-    "ValidationError",
     "load_schema",
-    "load_schema_with_defaults"
 ]
