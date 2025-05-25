@@ -2,10 +2,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox, 
     QDoubleSpinBox, QComboBox, QCheckBox, QPushButton, QScrollArea, 
     QTextEdit, QDateEdit, QTimeEdit, QDateTimeEdit, QFrame, QMessageBox,
-    QStackedWidget
+    QStackedWidget, QListView
 )
 from PySide6.QtCore import Qt, QDate, QTime, QDateTime, Signal
-from PySide6.QtGui import QRegularExpressionValidator
+from PySide6.QtGui import QRegularExpressionValidator, QStandardItem, QStandardItemModel
 import json
 import re
 from typing import Any, Dict, List, Optional, Union, Callable
@@ -656,6 +656,67 @@ class BaseFormWidget(QWidget):
         self.valueChanged.emit()
 
 
+class MultiSelectComboBox(QComboBox):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setModel(QStandardItemModel(self))
+        self.setView(QListView())
+        self.setEditable(True)
+        self.lineEdit().setReadOnly(True)
+        self.lineEdit().setPlaceholderText("Select options")
+        self.model().dataChanged.connect(self.on_data_changed)
+
+    def addItems(self, items):
+        for item in items:
+            if isinstance(item, tuple):
+                text, value = item
+            else:
+                text = value = item
+            std_item = QStandardItem(text)
+            std_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            std_item.setData(value, Qt.UserRole)
+            std_item.setCheckState(Qt.Unchecked)
+            self.model().appendRow(std_item)
+
+    def on_data_changed(self, topLeft, bottomRight, roles):
+        if Qt.CheckStateRole in roles:
+            self.update_text()
+
+    def update_text(self):
+        selected = [
+            self.model().item(i).text()
+            for i in range(self.model().rowCount())
+            if self.model().item(i).checkState() == Qt.Checked
+        ]
+        self.lineEdit().setText(", ".join(selected))
+
+    def get_selected_items(self):
+        return [
+            self.model().item(i).text()
+            for i in range(self.model().rowCount())
+            if self.model().item(i).checkState() == Qt.Checked
+        ]
+
+    def get_selected_values(self):
+        return [
+            self.model().item(i).data(Qt.UserRole)
+            for i in range(self.model().rowCount())
+            if self.model().item(i).checkState() == Qt.Checked
+        ]
+
+    def set_selected_items(self, selected_texts):
+        for i in range(self.model().rowCount()):
+            item = self.model().item(i)
+            item.setCheckState(Qt.Checked if item.text() in selected_texts else Qt.Unchecked)
+        self.update_text()
+
+    def clear_selection(self):
+        for i in range(self.model().rowCount()):
+            item = self.model().item(i)
+            item.setCheckState(Qt.Unchecked)
+        self.update_text()
+
+
 class StringWidget(BaseFormWidget):
     """Widget for string type with format support"""
     
@@ -839,8 +900,24 @@ class EnumWidget(BaseFormWidget):
         self.widget = QComboBox()
         self.widget.setEditable(False)
         
-        for item in schema["enum"]:
-            self.widget.addItem(str(item), item)  # Store actual value as data
+        # Handle dynamic options from external dictionary
+        options_dict_key = schema.get("enumSource")
+        if options_dict_key and isinstance(options_dict_key, str):
+            # Get options from the root schema's optionsData
+            options_data = resolver.root_schema.get("optionsData", {})
+            enum_options = options_data.get(options_dict_key, [])
+            
+            # Add items from the dynamic source
+            for item in enum_options:
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    # Handle (value, label) tuples
+                    self.widget.addItem(str(item[1]), item[0])
+                else:
+                    # Handle simple values
+                    self.widget.addItem(str(item), item)
+        else:
+            for item in schema.get("enum", []):
+                self.widget.addItem(str(item), item)
             
         if "default" in schema:
             index = self.widget.findData(schema["default"])
@@ -850,7 +927,7 @@ class EnumWidget(BaseFormWidget):
         layout.addWidget(self.widget)
         layout.addWidget(self.error_widget)
         
-        self.widget.currentIndexChanged.connect(self.update_validation)
+        self.widget.selectionChanged.connect(self.update_validation)
         
     def get_value(self) -> Any:
         return self.widget.currentData()
@@ -889,56 +966,101 @@ class ArrayWidget(BaseFormWidget):
     def __init__(self, schema: Dict[str, Any], resolver: SchemaResolver, validator: SchemaValidator, path: str = ""):
         super().__init__(schema, resolver, validator, path)
         
+        layout = QVBoxLayout(self)
+        
+        # Add title/description if specified
+        if "title" in schema:
+            title_label = QLabel(schema["title"])
+            title_label.setProperty("class", "title")
+            layout.addWidget(title_label)
+            
+        if "description" in schema:
+            desc_label = QLabel(schema["description"])
+            desc_label.setProperty("class", "description")
+            desc_label.setWordWrap(True)
+            layout.addWidget(desc_label)
+
         self.items_schema = schema.get("items", {})
         self.min_items = schema.get("minItems", 0)
         self.max_items = schema.get("maxItems", float('inf'))
-        
-        # Main layout
-        layout = QVBoxLayout(self)
-        
-        # Header with controls
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        
-        title = schema.get("title", "Array Items")
-        self.title_label = QLabel(f"{title}:")
-        header_layout.addWidget(self.title_label)
-        
-        header_layout.addStretch()
-        
-        self.add_button = QPushButton("Add Item")
-        self.add_button.clicked.connect(self.add_item)
-        header_layout.addWidget(self.add_button)
-        
-        layout.addWidget(header)
-        
-        # Scrollable container for items
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        self.items_widget = QWidget()
-        self.items_layout = QVBoxLayout(self.items_widget)
-        self.items_layout.addStretch()
-        
-        scroll.setWidget(self.items_widget)
-        layout.addWidget(scroll)
-        
-        # Error display
-        layout.addWidget(self.error_widget)
-        
         self.item_widgets = []
         
-        # Add default/initial items
-        if "default" in schema:
-            for item in schema["default"]:
-                self.add_item(item)
-        elif self.min_items > 0:
-            for _ in range(self.min_items):
-                self.add_item()
+        # Check if this is an enum array
+        is_enum_array = "enum" in self.items_schema or "enumSource" in self.items_schema
+        
+        if is_enum_array:
+            # Create multi-select combo for enum arrays
+            self.widget = MultiSelectComboBox()
+            
+            # Handle dynamic options from external dictionary
+            options_dict_key = self.items_schema.get("enumSource")
+            if options_dict_key and isinstance(options_dict_key, str):
+                # Get options from root schema's optionsData
+                options_data = resolver.root_schema.get("optionsData", {})
+                enum_options = options_data.get(options_dict_key, [])
                 
-        self.update_controls()
+                # Add items from dynamic source
+                for item in enum_options:
+                    if isinstance(item, (list, tuple)) and len(item) == 2:
+                        # Handle (value, label) tuples
+                        self.widget.addItems([(item[0], str(item[1]))])
+                    else:
+                        # Handle simple values
+                        self.widget.addItems([str(item)])
+            else:
+                # Add static enum items
+                enum_items = self.items_schema.get("enum", [])
+                self.widget.addItems([str(item) for item in enum_items])
+                    
+            # Set default values if any
+            if "default" in schema:
+                default_values = schema["default"]
+                if isinstance(default_values, list):
+                    self.widget.set_selected_items([str(v) for v in default_values])
+                
+            # Connect to data changed signal
+            self.widget.model().dataChanged.connect(self.update_validation)
+            
+            layout.addWidget(self.widget)
+            
+        else:
+            # Header with controls
+            header = QWidget()
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            
+            # Add button
+            self.add_button = QPushButton("Add Item")
+            self.add_button.clicked.connect(self.add_item)
+            header_layout.addWidget(self.add_button)
+            
+            layout.addWidget(header)
+            
+            # Scrollable container for items
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            
+            self.items_widget = QWidget()
+            self.items_layout = QVBoxLayout(self.items_widget)
+            self.items_layout.addStretch()
+            
+            scroll.setWidget(self.items_widget)
+            layout.addWidget(scroll)
+            
+            self.item_widgets = []
+            
+            # Add default/initial items
+            if "default" in schema:
+                for item in schema["default"]:
+                    self.add_item(item)
+            elif self.min_items > 0:
+                for _ in range(self.min_items):
+                    self.add_item()
+                    
+            self.update_controls()
+        
+        layout.addWidget(self.error_widget)
         
     def add_item(self, value: Any = None):
         """Add a new item to the array"""
@@ -1040,43 +1162,34 @@ class ArrayWidget(BaseFormWidget):
     
     def get_value(self) -> List[Any]:
         """Get array values"""
+        if hasattr(self, 'widget') and isinstance(self.widget, MultiSelectComboBox):
+            return self.widget.get_selected_values()
+            
+        # Handle regular array items
         values = []
-        for i in range(self.items_layout.count() - 1):
-            item_container = self.items_layout.itemAt(i).widget()
-            if not item_container:
-                continue
-                
-            container_layout = item_container.layout()
-            if not container_layout:
-                continue
-                
-            widget_item = container_layout.itemAt(1)
-            if not widget_item:
-                continue
-                
-            item_widget = widget_item.widget()
-            if not hasattr(item_widget, 'get_value'):
-                continue
-                
-            try:
-                value = item_widget.get_value()
-                if value is not None:
-                    values.append(value)
-            except Exception as e:
-                print(f"Error getting array item value: {e}")
-        
+        for widget in self.item_widgets:
+            if hasattr(widget, 'get_value'):
+                try:
+                    value = widget.get_value()
+                    if value is not None:
+                        values.append(value)
+                except Exception as e:
+                    print(f"Error getting array item value: {e}")
         return values
-    
+
     def set_value(self, value: List[Any]):
         """Set array values"""
         if not isinstance(value, list):
             return
             
-        # Clear existing items
+        if hasattr(self, 'widget') and isinstance(self.widget, MultiSelectComboBox):
+            self.widget.set_selected_items([str(v) for v in value])
+            return
+            
+        # Regular array handling
         while self.item_widgets:
             self.remove_item(0)
             
-        # Add new items
         for item in value:
             self.add_item(item)
 
@@ -1984,7 +2097,7 @@ class JsonSchemaForm(QWidget):
     Main JSON Schema form with full Draft 2020-12 support
     """
     
-    def __init__(self, schema: Dict[str, Any], title: str = "JSON Schema Form"):
+    def __init__(self, schema: Dict[str, Any], data: Dict[str, any] = None, title: str = "JSON Schema Form", toolbar: bool = False):
         super().__init__()
         
         self.setWindowTitle(title)
@@ -1992,6 +2105,10 @@ class JsonSchemaForm(QWidget):
         
         # Apply modern stylesheet
         self.setStyleSheet(MODERN_STYLESHEET)
+
+        # Store Data Dictionary
+        if data is not None:
+            schema["oprtionsData"] = data
         
         # Initialize components
         self.resolver = SchemaResolver(schema)
@@ -2033,24 +2150,25 @@ class JsonSchemaForm(QWidget):
         layout.addWidget(scroll_area)
         
         # Modern button bar
-        button_bar = QWidget()
-        button_layout = QHBoxLayout(button_bar)
-        
-        self.validate_button = QPushButton("🔍 Validate")
-        self.validate_button.clicked.connect(self.validate_form)
-        
-        self.get_data_button = QPushButton("📋 Get Data")
-        self.get_data_button.clicked.connect(self.show_data)
-        
-        self.clear_button = QPushButton("🗑️ Clear")
-        self.clear_button.clicked.connect(self.clear_form)
-        
-        button_layout.addStretch()
-        button_layout.addWidget(self.validate_button)
-        button_layout.addWidget(self.get_data_button)
-        button_layout.addWidget(self.clear_button)
-        
-        layout.addWidget(button_bar)
+        if toolbar:
+            button_bar = QWidget()
+            button_layout = QHBoxLayout(button_bar)
+            
+            self.validate_button = QPushButton("🔍 Validate")
+            self.validate_button.clicked.connect(self.validate_form)
+            
+            self.get_data_button = QPushButton("📋 Get Data")
+            self.get_data_button.clicked.connect(self.show_data)
+            
+            self.clear_button = QPushButton("🗑️ Clear")
+            self.clear_button.clicked.connect(self.clear_form)
+            
+            button_layout.addStretch()
+            button_layout.addWidget(self.validate_button)
+            button_layout.addWidget(self.get_data_button)
+            button_layout.addWidget(self.clear_button)
+            
+            layout.addWidget(button_bar)
         
     def get_form_data(self) -> Any:
         """Get current form data"""

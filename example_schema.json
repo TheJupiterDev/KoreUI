@@ -1,171 +1,18 @@
 {
-    "title": "Complex Form Example",
-    "description": "This form demonstrates various JSON Schema features including arrays of oneOf",
+    "title": "Multi-Select Example",
     "type": "object",
-    "required": ["name", "age", "contacts", "preferences"],
     "properties": {
-        "name": {
-            "type": "string",
-            "title": "Full Name",
-            "minLength": 2,
-            "maxLength": 100
-        },
-        "age": {
-            "type": "integer",
-            "title": "Age",
-            "minimum": 0,
-            "maximum": 150
-        },
-        "contacts": {
+        "colors": {
             "type": "array",
-            "title": "Contact Methods",
-            "description": "Add one or more contact methods",
-            "minItems": 1,
+            "title": "Select Colors",
+            "description": "Choose one or more colors",
             "items": {
-                "oneOf": [
-                    {
-                        "type": "object",
-                        "title": "Email Contact",
-                        "required": ["type", "email"],
-                        "properties": {
-                            "type": {
-                                "const": "email"
-                            },
-                            "email": {
-                                "type": "string",
-                                "format": "email"
-                            },
-                            "preferred": {
-                                "type": "boolean",
-                                "default": false
-                            }
-                        }
-                    },
-                    {
-                        "type": "object",
-                        "title": "Phone Contact",
-                        "required": ["type", "phone"],
-                        "properties": {
-                            "type": {
-                                "const": "phone"
-                            },
-                            "phone": {
-                                "type": "string",
-                                "pattern": "^\\+?[1-9]\\d{1,14}$"
-                            },
-                            "preferred": {
-                                "type": "boolean",
-                                "default": false
-                            }
-                        }
-                    }
-                ]
-            }
-        },
-        "preferences": {
-            "type": "object",
-            "title": "Preferences",
-            "required": ["theme"],
-            "properties": {
-                "theme": {
-                    "type": "string",
-                    "enum": ["light", "dark", "system"],
-                    "default": "system"
-                },
-                "notifications": {
-                    "type": "boolean",
-                    "title": "Enable Notifications",
-                    "default": true
-                },
-                "newsletter": {
-                    "type": "string",
-                    "title": "Newsletter Frequency",
-                    "oneOf": [
-                        {
-                            "const": "never",
-                            "title": "Never"
-                        },
-                        {
-                            "const": "daily",
-                            "title": "Daily"
-                        },
-                        {
-                            "const": "weekly",
-                            "title": "Weekly"
-                        },
-                        {
-                            "const": "monthly",
-                            "title": "Monthly"
-                        }
-                    ],
-                    "default": "never"
-                }
-            }
-        },
-        "address": {
-            "type": "object",
-            "title": "Address",
-            "properties": {
-                "street": {
-                    "type": "string",
-                    "title": "Street"
-                },
-                "city": {
-                    "type": "string",
-                    "title": "City"
-                },
-                "country": {
-                    "type": "string",
-                    "title": "Country",
-                    "enum": ["USA", "Canada", "UK", "Other"]
-                },
-                "postal": {
-                    "type": "string",
-                    "title": "Postal Code",
-                    "pattern": "^[A-Z0-9]{3,10}$"
-                }
+                "type": "string",
+                "enum": ["red", "green", "blue", "yellow", "purple", "orange"]
             },
-            "required": ["street", "city", "country"]
-        },
-        "dates": {
-            "type": "array",
-            "title": "Important Dates",
-            "items": {
-                "oneOf": [
-                    {
-                        "type": "object",
-                        "title": "Birthday",
-                        "required": ["type", "date"],
-                        "properties": {
-                            "type": {
-                                "const": "birthday"
-                            },
-                            "date": {
-                                "type": "string",
-                                "format": "date"
-                            }
-                        }
-                    },
-                    {
-                        "type": "object",
-                        "title": "Anniversary",
-                        "required": ["type", "date", "description"],
-                        "properties": {
-                            "type": {
-                                "const": "anniversary"
-                            },
-                            "date": {
-                                "type": "string",
-                                "format": "date"
-                            },
-                            "description": {
-                                "type": "string",
-                                "maxLength": 100
-                            }
-                        }
-                    }
-                ]
-            }
+            "uniqueItems": true,
+            "minItems": 1,
+            "maxItems": 3
         }
     }
 }
