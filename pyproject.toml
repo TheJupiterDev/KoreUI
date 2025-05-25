@@ -1,0 +1,17 @@
+[project]
+name = "koreui"
+version = "0.1.0"
+description = "Dynamic GUI Generator from JSON Schema"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "TheJupiterDev", email = "thatgeometrydude@gmail.com" }
+]
+dependencies = [
+    "PySide6>=6.9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/TheJupiterDev/KoreUI"
+Repository = "https://github.com/TheJupiterDev/KoreUI.git"

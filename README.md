@@ -11,10 +11,6 @@
 
 ---
 
-> ⚠️ This project is still in pre alpha stages!
-
----
-
 ## 🚀 Features
 
 - 📄 Full support for JSON Schema Draft 2020-12*
@@ -31,7 +27,7 @@
 
 Run the following:
 
-```pip install pyside6```
+```pip install koreui```
 
 Requirements:
 
@@ -40,50 +36,55 @@ Requirements:
 
 ---
 
+## 📦 Installation
+
+```bash
+pip install koreui
+```
+
+Requirements:
+- Python 3.10+
+- PySide6
+
 ## 🧑‍💻 Usage
 
-To start the application:
-
-```python app.py```
-
-Edit the `example_schema.json` file to customize your form structure.
-
----
-
-## 🧪 Example Schema
+1. Create a JSON schema file (e.g., `schema.json`):
 ```json
 {
-  "title": "User Profile",
-  "type": "object",
-  "required": ["name", "age", "email"],
-  "properties": {
-    "name": {
-      "type": "string",
-      "title": "Full Name"
-    },
-    "age": {
-      "type": "integer",
-      "title": "Age",
-      "minimum": 0
-    },
-    "email": {
-      "type": "string",
-      "format": "email",
-      "title": "Email Address"
-    },
-    "subscribe": {
-      "type": "boolean",
-      "title": "Subscribe to Newsletter"
-    },
-    "bio": {
-      "type": "string",
-      "title": "Short Bio",
-      "maxLength": 250
+    "title": "User Profile",
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "title": "Full Name"
+        }
     }
-  }
 }
 ```
 
+2. Use KoreUI in your Python code:
+```python
+from PySide6.QtWidgets import QApplication
+from koreui import JsonSchemaForm, load_schema
+
+# Create Qt application
+app = QApplication([])
+
+# Load schema and create form
+schema = load_schema('schema.json')
+form = JsonSchemaForm(schema)
+
+# Show form and run application
+form.show()
+app.exec()
+```
+
+3. Get form data:
+```python
+# After form is filled out
+data = form.get_form_data()
+print(data)  # Dictionary with form values
+```
 ---
 
 ## 🧱 Architecture
