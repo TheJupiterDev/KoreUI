@@ -3,11 +3,11 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QComboBox, QCheckBox, QGroupBox, QPushButton, 
     QApplication, QScrollArea, QTextEdit, QDateEdit, QTimeEdit, 
     QDateTimeEdit, QTabWidget, QFrame, QSplitter, QTreeWidget, 
-    QTreeWidgetItem, QHeaderView, QMessageBox, QFormLayout, 
+    QTreeWidgetItem, QHeaderView, QFormLayout, QMessageBox,
     QStackedWidget, QSlider, QProgressBar, QDial, QLCDNumber,
     QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem
 )
-from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimer, Signal, QObject, QUrl
+from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimer, Signal, QObject, QUrl, QCoreApplication
 from PySide6.QtGui import QValidator, QRegularExpressionValidator, QFont, QPalette, QColor
 import json
 import re
@@ -20,16 +20,166 @@ import ipaddress
 import email.utils
 
 MODERN_STYLESHEET = """
-/* Stylesheet Coming Soon */
+QWidget {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 12px;
+    background-color: #ffffff;
+}
+
+QLabel {
+    color: #323130;
+    padding: 2px;
+}
+
+QLabel[class="title"] {
+    font-size: 18px;
+    font-weight: bold;
+    color: #201f1e;
+    margin-bottom: 10px;
+}
+
+QLabel[class="description"] {
+    color: #605e5c;
+    margin-bottom: 15px;
+}
+
+QLabel[class="error"] {
+    color: #a4262c;
+    font-size: 11px;
+    padding: 4px;
+}
+
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit {
+    padding: 6px;
+    border: 1px solid #8a8886;
+    border-radius: 4px;
+    background-color: #ffffff;
+}
+
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QTextEdit:focus {
+    border-color: #0078d4;
+    outline: none;
+}
+
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+    background-color: #f3f2f1;
+    border-color: #c8c6c4;
+}
+
+QPushButton {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    background-color: #0078d4;
+    color: white;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #106ebe;
+}
+
+QPushButton:pressed {
+    background-color: #005a9e;
+}
+
+QPushButton:disabled {
+    background-color: #f3f2f1;
+    color: #a19f9d;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #8a8886;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #0078d4;
+    border-color: #0078d4;
+    image: url(checkmark.png);
+}
+
+QScrollArea {
+    border: none;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: #f3f2f1;
+    width: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #c8c6c4;
+    border-radius: 5px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #a19f9d;
+}
+
+QGroupBox {
+    margin-top: 12px;
+    padding-top: 24px;
+    border: 1px solid #e1dfdd;
+    border-radius: 4px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 3px;
+    color: #323130;
+}
+
+.array-item {
+    background-color: #faf9f8;
+    border: 1px solid #edebe9;
+    border-radius: 4px;
+    margin: 4px 0;
+    padding: 8px;
+}
+
+.array-index {
+    color: #605e5c;
+    font-size: 11px;
+}
+
+.remove-button {
+    background-color: #a4262c;
+    color: white;
+    border-radius: 2px;
+    padding: 2px;
+}
+
+.remove-button:hover {
+    background-color: #751d22;
+}
+
+.allof-separator {
+    color: #e1dfdd;
+    height: 1px;
+    margin: 8px 0;
+}
 """
 
-class ValidationError(Exception):
-    """Custom validation error for schema validation"""
+class ValidationError:
+    """Custom validation error class (not an Exception)"""
     def __init__(self, message: str, path: str = "", schema_path: str = ""):
         self.message = message
         self.path = path
         self.schema_path = schema_path
-        super().__init__(f"{path}: {message}")
+        
+    def __str__(self):
+        return self.message
 
 
 class SchemaResolver:
@@ -43,35 +193,41 @@ class SchemaResolver:
         self.refs_cache = {}
         self.resolution_stack = []
         self.composition_depth = 0
-        self.max_depth = 50  # Prevent infinite recursion
+        self.max_depth = 50
+        self._creation_depth = 0  # Add creation depth tracking
+    
+    def reset_creation_depth(self):
+        """Reset the creation depth counter"""
+        self._creation_depth = 0
         
     def resolve_schema(self, schema: Union[Dict[str, Any], bool], current_path: str = "#") -> Dict[str, Any]:
         """Enhanced resolution with depth tracking"""
-        if self.composition_depth > self.max_depth:
+        if len(self.resolution_stack) > self.max_depth:
             raise ValidationError(f"Maximum schema resolution depth exceeded at {current_path}")
-            
-        if isinstance(schema, bool):
-            return {"type": "object"} if schema else {"not": {}}
-            
-        if not isinstance(schema, dict):
-            return {}
+        self.resolution_stack.append(current_path)
         
-        self.composition_depth += 1
         try:
+            if isinstance(schema, bool):
+                return {"type": "object"} if schema else {"not": {}}
+            
+            if not isinstance(schema, dict):
+                return {}
+            
+            self.composition_depth += 1
             # Handle $ref first
             if "$ref" in schema:
                 return self._resolve_ref(schema["$ref"], current_path)
                 
-            # Handle conditional schemas (preserve structure for runtime evaluation)
             if "if" in schema:
                 resolved = dict(schema)
                 resolved["if"] = self.resolve_schema(schema["if"], f"{current_path}/if")
+                # defer then/else resolution to runtime conditional handling
                 if "then" in schema:
-                    resolved["then"] = self.resolve_schema(schema["then"], f"{current_path}/then")
+                    resolved["then"] = schema["then"]
                 if "else" in schema:
-                    resolved["else"] = self.resolve_schema(schema["else"], f"{current_path}/else")
+                    resolved["else"] = schema["else"]
                 return resolved
-            
+
             # Handle composition keywords with better nesting support
             resolved = dict(schema)
             
@@ -105,10 +261,10 @@ class SchemaResolver:
                     )
                 resolved["properties"] = resolved_props
                 
-            return resolved
-            
+            return resolved   
+        
         finally:
-            self.composition_depth -= 1
+            self.resolution_stack.pop()
         
     def _merge_all_of(self, all_of_schemas: List[Dict], base_schema: Dict, current_path: str) -> Dict[str, Any]:
         """Enhanced allOf merging with support for nested compositions"""
@@ -190,17 +346,20 @@ class SchemaValidator:
             return False
             
     def validate(self, data: Any, schema: Dict[str, Any], path: str = "") -> List[ValidationError]:
-        """Validate data against schema, returning list of errors"""
         errors = []
-        
+
         try:
-            resolved_schema = self.resolver.resolve_schema(schema)
-            self._validate_value(data, resolved_schema, path, errors)
+            if isinstance(schema, dict) and "if" in schema:
+                # Skip resolving full schema — let conditional handler do it
+                self._validate_conditional(data, schema, path, errors)
+            else:
+                resolved_schema = self.resolver.resolve_schema(schema)
+                self._validate_value(data, resolved_schema, path, errors)
         except ValidationError as e:
-            errors.append(e)
-            
+            errors.append(ValidationError(str(e), path))
+
         return errors
-        
+
     def _validate_value(self, data: Any, schema: Dict[str, Any], path: str, errors: List[ValidationError]):
         """Core validation logic"""
         
@@ -319,45 +478,85 @@ class SchemaValidator:
                 self._validate_value(item, items_schema, f"{path}[{i}]", errors)
                 
     def _validate_object(self, data: Dict, schema: Dict, path: str, errors: List[ValidationError]):
-        """Object-specific validation"""
-        if "minProperties" in schema and len(data) < schema["minProperties"]:
-            errors.append(ValidationError(f"Object has too few properties (min: {schema['minProperties']})", path))
+        """Object-specific validation with improved nested conditional handling"""
+        if not isinstance(data, dict):
+            errors.append(ValidationError(f"Expected object, got {type(data).__name__}", path))
+            return
+
+        # Track active schema and properties
+        active_properties = {}
+        active_required = set()
+
+        # Handle conditional schema first
+        if "if" in schema:
+            temp_validator = SchemaValidator(self.resolver)
+            condition_errors = temp_validator.validate(data, schema["if"])
+            condition_met = not bool(condition_errors)
             
-        if "maxProperties" in schema and len(data) > schema["maxProperties"]:
-            errors.append(ValidationError(f"Object has too many properties (max: {schema['maxProperties']})", path))
-            
-        # Required properties
-        required = schema.get("required", [])
-        for prop in required:
-            if prop not in data:
-                errors.append(ValidationError(f"Required property '{prop}' is missing", path))
-                
-        # Validate properties
-        properties = schema.get("properties", {})
+            # Select and apply active branch
+            if condition_met and "then" in schema:
+                active_branch = schema["then"]
+            elif not condition_met and "else" in schema:
+                active_branch = schema["else"]
+            else:
+                active_branch = {}
+
+            # Update active properties and required fields
+            if isinstance(active_branch, dict):
+                active_properties.update(active_branch.get("properties", {}))
+                active_required.update(active_branch.get("required", []))
+
+        # Add base properties and required fields
+        active_properties.update(schema.get("properties", {}))
+        active_required.update(schema.get("required", []))
+
+        # Validate only properties that are in the active schema
         for prop_name, prop_value in data.items():
-            if prop_name in properties:
-                prop_schema = properties[prop_name]
-                self._validate_value(prop_value, prop_schema, f"{path}.{prop_name}" if path else prop_name, errors)
+            if prop_name in active_properties:
+                prop_schema = active_properties[prop_name]
+                prop_path = f"{path}.{prop_name}" if path else prop_name
+
+                # Handle nested conditionals
+                if "if" in prop_schema:
+                    nested_validator = SchemaValidator(self.resolver)
+                    nested_condition = nested_validator.validate(data, prop_schema["if"])
+                    is_active = not bool(nested_condition)
+
+                    # Validate against appropriate nested branch
+                    if is_active and "then" in prop_schema:
+                        self._validate_value(prop_value, prop_schema["then"], prop_path, errors)
+                    elif not is_active and "else" in prop_schema:
+                        self._validate_value(prop_value, prop_schema["else"], prop_path, errors)
+                else:
+                    self._validate_value(prop_value, prop_schema, prop_path, errors)
+
+        # Only validate required fields from the active schema
+        for prop_name in active_required:
+            if prop_name not in data:
+                prop_schema = active_properties.get(prop_name, {})
+                # Skip if this is a conditional property that isn't active
+                if "if" in prop_schema:
+                    nested_validator = SchemaValidator(self.resolver)
+                    nested_condition = nested_validator.validate(data, prop_schema["if"])
+                    if bool(nested_condition):  # Skip if condition isn't met
+                        continue
+                errors.append(ValidationError(f"Required property '{prop_name}' is missing", path))
 
     def _validate_conditional(self, data: Any, schema: Dict[str, Any], path: str, errors: List[ValidationError]):
-        """Handle if/then/else conditional validation"""
+        """Handle if/then/else conditional validation correctly"""
         if_schema = schema["if"]
         then_schema = schema.get("then")
         else_schema = schema.get("else")
 
-        # Check if 'if' schema passes (no errors means it passes)
-        if_errors = []
-        self._validate_value(data, if_schema, path, if_errors)
-        
-        if not if_errors:
-            # 'if' condition passed → apply 'then' schema
-            if then_schema:
-                self._validate_value(data, then_schema, path, errors)
-        else:
-            # 'if' condition failed → apply 'else' schema
-            if else_schema:
-                self._validate_value(data, else_schema, path, errors)
+        # Check if 'if' schema passes (use a new resolver/validator to avoid mutation)
+        condition_validator = SchemaValidator(self.resolver)
+        condition_errors = condition_validator.validate(data, if_schema, path)
 
+        # Apply only the active branch schema
+        if not condition_errors and then_schema:
+            self._validate_value(data, then_schema, path, errors)
+        elif condition_errors and else_schema:
+            self._validate_value(data, else_schema, path, errors)
 
     def _validate_all_of(self, data: Any, schemas: List[Dict], path: str, errors: List[ValidationError]):
         """Validate allOf - all schemas must pass"""
@@ -411,11 +610,12 @@ class ErrorDisplayWidget(QWidget):
         
     def show_errors(self, errors: List[ValidationError]):
         if errors:
-            error_text = "\n".join([f"• {error.message}" for error in errors[:5]])  # Show max 5 errors
+            error_text = "\n".join([f"• {error.message}" for error in errors[:5]])
             if len(errors) > 5:
                 error_text += f"\n... and {len(errors) - 5} more errors"
             self.error_label.setText(error_text)
-            self.show()
+            if self.parent() is not None:
+                self.show()
         else:
             self.hide()
 
@@ -677,6 +877,7 @@ class ConstWidget(BaseFormWidget):
         self.widget.setStyleSheet("color: gray; font-style: italic;")
         
         layout.addWidget(self.widget)
+        layout.addWidget(self.error_widget)
         
     def get_value(self) -> Any:
         return self.const_value
@@ -691,147 +892,171 @@ class ArrayWidget(BaseFormWidget):
     def __init__(self, schema: Dict[str, Any], resolver: SchemaResolver, validator: SchemaValidator, path: str = ""):
         super().__init__(schema, resolver, validator, path)
         
-        self.item_widgets = []
         self.items_schema = schema.get("items", {})
+        self.min_items = schema.get("minItems", 0)
+        self.max_items = schema.get("maxItems", float('inf'))
         
+        # Main layout
         layout = QVBoxLayout(self)
         
-        # Header with add button
-        header_layout = QHBoxLayout()
-        array_title = schema.get("title", "Array Items")
-        header_layout.addWidget(QLabel(f"{array_title}:"))
+        # Header with controls
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        
+        title = schema.get("title", "Array Items")
+        self.title_label = QLabel(f"{title}:")
+        header_layout.addWidget(self.title_label)
+        
         header_layout.addStretch()
         
         self.add_button = QPushButton("Add Item")
         self.add_button.clicked.connect(self.add_item)
         header_layout.addWidget(self.add_button)
         
-        layout.addLayout(header_layout)
+        layout.addWidget(header)
         
-        # Items container with better scrolling for complex items
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setMaximumHeight(400)
+        # Scrollable container for items
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        items_container = QWidget()
-        self.items_layout = QVBoxLayout(items_container)
-        scroll_area.setWidget(items_container)
+        self.items_widget = QWidget()
+        self.items_layout = QVBoxLayout(self.items_widget)
+        self.items_layout.addStretch()
         
-        layout.addWidget(scroll_area)
+        scroll.setWidget(self.items_widget)
+        layout.addWidget(scroll)
+        
+        # Error display
         layout.addWidget(self.error_widget)
         
-        # Initialize with default items
-        if "default" in schema and isinstance(schema["default"], list):
+        self.item_widgets = []
+        
+        # Add default/initial items
+        if "default" in schema:
             for item in schema["default"]:
                 self.add_item(item)
-    
+        elif self.min_items > 0:
+            for _ in range(self.min_items):
+                self.add_item()
+                
+        self.update_controls()
+        
     def add_item(self, value: Any = None):
-        """Enhanced item addition with better oneOf/anyOf handling"""
+        """Add a new item to the array"""
+        if len(self.item_widgets) >= self.max_items:
+            return
+            
+        # Container for item
+        container = QWidget()
+        container.setProperty("class", "array-item")
+        item_layout = QHBoxLayout(container)
+        
+        # Index label
         index = len(self.item_widgets)
-        item_path = f"{self.path}[{index}]"
+        index_label = QLabel(f"#{index + 1}")
+        index_label.setProperty("class", "array-index")
+        item_layout.addWidget(index_label)
         
-        # Create item container with better layout
-        item_container = QWidget()
-        item_container.setProperty("class", "array-item")
-        item_layout = QHBoxLayout(item_container)
-        item_layout.setContentsMargins(10, 5, 10, 5)
-        
-        # Create index label for complex items
-        if self._is_complex_schema(self.items_schema):
-            index_label = QLabel(f"#{index + 1}")
-            index_label.setMinimumWidth(30)
-            index_label.setProperty("class", "array-index")
-            item_layout.addWidget(index_label)
-        
-        # Create widget for item with parent value provider for conditionals
+        # Create item widget
         item_widget = SchemaWidgetFactory.create_widget(
-            self.items_schema, self.resolver, self.validator, item_path,
-            parent_value_provider=lambda idx=index: self.get_item_context(idx)
+            self.items_schema,
+            self.resolver,
+            self.validator,
+            f"{self.path}[{index}]"
         )
         
-        # Set value if provided, with better error handling
         if value is not None:
-            self._set_item_value_safely(item_widget, value)
+            try:
+                item_widget.set_value(value)
+            except Exception as e:
+                print(f"Error setting array item value: {e}")
                 
+        item_layout.addWidget(item_widget)
+        
         # Remove button
         remove_button = QPushButton("×")
-        remove_button.setMaximumWidth(30)
         remove_button.setProperty("class", "remove-button")
+        remove_button.setMaximumWidth(30)
         remove_button.clicked.connect(lambda: self.remove_item(index))
-        
-        item_layout.addWidget(item_widget, 1)  # Give item widget most space
         item_layout.addWidget(remove_button)
         
-        self.items_layout.addWidget(item_container)
+        # Insert before stretch
+        self.items_layout.insertWidget(self.items_layout.count() - 1, container)
         self.item_widgets.append(item_widget)
         
         item_widget.valueChanged.connect(self.update_validation)
+        self.update_controls()
         self.update_validation()
-    
-    def _is_complex_schema(self, schema: Dict[str, Any]) -> bool:
-        """Check if schema represents a complex type"""
-        return any(key in schema for key in ["oneOf", "anyOf", "allOf", "if", "properties"])
-    
-    def _set_item_value_safely(self, item_widget: BaseFormWidget, value: Any):
-        """Safely set item value with multiple fallback strategies"""
-        try:
-            item_widget.set_value(value)
-        except Exception as e:
-            print(f"Direct value setting failed: {e}")
-            
-            # Try type conversion based on schema
-            try:
-                converted_value = self._convert_value_for_schema(value, self.items_schema)
-                item_widget.set_value(converted_value)
-            except Exception as e2:
-                print(f"Converted value setting failed: {e2}")
-                
-                # For oneOf/anyOf widgets, try setting empty and let them handle it
-                if isinstance(item_widget, (OneOfWidget, AnyOfWidget)):
-                    try:
-                        # These widgets have their own value matching logic
-                        item_widget.set_value(value)
-                    except:
-                        pass  # Let the widget remain with default values
-    
-    def get_item_context(self, index: int) -> Dict[str, Any]:
-        """Get context for conditional evaluation in array items"""
-        try:
-            if 0 <= index < len(self.item_widgets):
-                return {"index": index, "value": self.item_widgets[index].get_value()}
-        except:
-            pass
-        return {"index": index}
-    
+        
     def remove_item(self, index: int):
-        """Enhanced item removal with proper cleanup"""
-        if 0 <= index < len(self.item_widgets):
-            # Remove widget
-            container = self.item_widgets[index].parent()
-            self.items_layout.removeWidget(container)
-            container.deleteLater()
+        """Remove an item from the array"""
+        if index < 0 or index >= len(self.item_widgets):
+            return
             
-            # Remove from list
-            del self.item_widgets[index]
+        if len(self.item_widgets) <= self.min_items:
+            return
             
-            # Update remaining item indices and labels
-            for i, item_widget in enumerate(self.item_widgets):
-                container = item_widget.parent()
-                layout = container.layout()
-                
-                # Update index label if present
-                if layout.count() > 2:  # Has index label
-                    index_label = layout.itemAt(0).widget()
-                    if isinstance(index_label, QLabel):
-                        index_label.setText(f"#{i + 1}")
-                
-                # Update remove button
-                remove_button = layout.itemAt(-1).widget()  # Last item
+        # Remove widget
+        container = self.item_widgets[index].parent()
+        self.items_layout.removeWidget(container)
+        container.deleteLater()
+        
+        # Remove from list
+        del self.item_widgets[index]
+        
+        # Update remaining indices
+        self.update_indices()
+        self.update_controls()
+        self.update_validation()
+        
+    def update_indices(self):
+        """Update index labels and remove button connections"""
+        for i, widget in enumerate(self.item_widgets):
+            container = widget.parent()
+            layout = container.layout()
+            
+            # Update index label
+            index_label = layout.itemAt(0).widget()
+            if isinstance(index_label, QLabel):
+                index_label.setText(f"#{i + 1}")
+            
+            # Update remove button
+            remove_button = layout.itemAt(2).widget()
+            if isinstance(remove_button, QPushButton):
                 remove_button.clicked.disconnect()
                 remove_button.clicked.connect(lambda checked, idx=i: self.remove_item(idx))
+    
+    def update_controls(self):
+        """Update button states based on constraints"""
+        current_items = len(self.item_widgets)
+        self.add_button.setEnabled(current_items < self.max_items)
+        
+        # Update remove buttons
+        for widget in self.item_widgets:
+            container = widget.parent()
+            layout = container.layout()
+            remove_button = layout.itemAt(2).widget()
+            if isinstance(remove_button, QPushButton):
+                remove_button.setEnabled(current_items > self.min_items)
+    
+    def get_value(self) -> List[Any]:
+        """Get array values"""
+        return [widget.get_value() for widget in self.item_widgets]
+    
+    def set_value(self, value: List[Any]):
+        """Set array values"""
+        if not isinstance(value, list):
+            return
             
-            self.update_validation()
+        # Clear existing items
+        while self.item_widgets:
+            self.remove_item(0)
+            
+        # Add new items
+        for item in value:
+            self.add_item(item)
 
 
 class ObjectWidget(BaseFormWidget):
@@ -842,6 +1067,8 @@ class ObjectWidget(BaseFormWidget):
         
         self.property_widgets = {}
         self.conditional_widgets = []
+        self._update_count = 0
+        self.max_updates = 10
         
         layout = QVBoxLayout(self)
         
@@ -871,11 +1098,13 @@ class ObjectWidget(BaseFormWidget):
                 
             layout.addWidget(label)
             
-            # Create widget for property
-            #full_value_provider = self.parent_value_provider or (lambda: {})
+            # Create widget for property with safe value provider
+            def make_value_provider():
+                return lambda: self.get_value()
+
             prop_widget = SchemaWidgetFactory.create_widget(
-                prop_schema, self.resolver, self.validator, prop_path,
-                parent_value_provider=lambda: self.get_value()
+                prop_schema, resolver, validator, prop_path,
+                parent_value_provider=make_value_provider()
             )
 
             layout.addWidget(prop_widget)
@@ -894,16 +1123,58 @@ class ObjectWidget(BaseFormWidget):
             for prop_name, value in schema["default"].items():
                 if prop_name in self.property_widgets:
                     self.property_widgets[prop_name].set_value(value)
-    
+
     def _on_property_changed(self):
-        """Handle property value changes and update conditionals"""
-        # Update all conditional child widgets
-        current_data = self.get_value()
-        for conditional_widget in self.conditional_widgets:
-            conditional_widget.update_condition(current_data)
-        
-        # Emit our own change signal
-        self.update_validation()
+        """Handle property value changes with correct context for all conditionals"""
+        if self._update_count >= self.max_updates:
+            return
+
+        self._update_count += 1
+        try:
+            # Always use the full current object value as parent context
+            current_data = self.get_value()
+            for conditional_widget in self.conditional_widgets:
+                conditional_widget.update_condition(current_data)
+        finally:
+            self._update_count -= 1
+            self.update_validation()
+
+    def _get_safe_value(self, exclude_path: str) -> Dict[str, Any]:
+        """Get value with improved nested handling"""
+        if self._update_count >= self.max_updates:
+            return {}
+            
+        self._update_count += 1
+        try:
+            result = {}
+            # First collect all non-conditional values
+            for prop_name, widget in self.property_widgets.items():
+                if widget.path != exclude_path and not isinstance(widget, ConditionalWidget):
+                    try:
+                        value = widget.get_value()
+                        if value is not None:
+                            result[prop_name] = value
+                    except Exception as e:
+                        print(f"Error getting value for {prop_name}: {e}")
+                        
+            # Then handle conditionals in dependency order
+            for widget in sorted(self.conditional_widgets, key=lambda w: len(w.path.split('.'))):
+                if widget.path != exclude_path:
+                    try:
+                        value = widget.get_value()
+                        if value is not None:
+                            # Split path to handle nested properties
+                            path_parts = widget.path.split('.')
+                            current_dict = result
+                            for part in path_parts[:-1]:
+                                current_dict = current_dict.setdefault(part, {})
+                            current_dict[path_parts[-1]] = value
+                    except Exception as e:
+                        print(f"Error getting conditional value for {widget.path}: {e}")
+                        
+            return result
+        finally:
+            self._update_count -= 1
     
     def _get_property_label(self, prop_name: str, prop_schema: Dict[str, Any], is_required: bool) -> str:
         """Generate a meaningful label for a property"""
@@ -916,14 +1187,47 @@ class ObjectWidget(BaseFormWidget):
             label_text += " *"
         
         return label_text
-            
+
+    def _validate_object(self, data: Dict, schema: Dict, path: str, errors: List[ValidationError]):
+        # Track active schema and properties
+        active_properties = {}
+        active_required = set()
+
+        # Only validate required fields from the active schema
+        for prop_name in active_required:
+            if prop_name not in data:
+                prop_schema = active_properties.get(prop_name, {})
+                # Skip if this is a conditional property that isn't active
+                if "if" in prop_schema:
+                    nested_validator = SchemaValidator(self.resolver)
+                    nested_condition = nested_validator.validate(data, prop_schema["if"])
+                    if bool(nested_condition):  # Skip if condition isn't met
+                        continue
+                # Add to errors list instead of raising
+                errors.append(ValidationError(f"Required property '{prop_name}' is missing", path))
+
     def get_value(self) -> Dict[str, Any]:
         result = {}
         for prop_name, widget in self.property_widgets.items():
             try:
                 value = widget.get_value()
                 if value is not None:
-                    result[prop_name] = value
+                    # Filter keys that are actually in the current schema
+                    if prop_name in self.schema.get("properties", {}):
+                        prop_schema = self.schema["properties"][prop_name]
+
+                        # If this is a conditional schema, apply its 'if' to see if 'then' or 'else' is active
+                        if "if" in prop_schema and isinstance(widget, ConditionalWidget):
+                            try:
+                                active_value = value
+                                allowed_keys = set(widget._current_schema.get("properties", {}).keys()) if widget._current_schema else set()
+                                if isinstance(active_value, dict):
+                                    active_value = {k: v for k, v in active_value.items() if k in allowed_keys}
+                                result[prop_name] = active_value
+                            except Exception as e:
+                                print(f"Error filtering conditional value for {prop_name}: {e}")
+                        else:
+                            result[prop_name] = value
             except Exception as e:
                 print(f"Error getting value for {prop_name}: {e}")
         return result
@@ -939,9 +1243,13 @@ class ObjectWidget(BaseFormWidget):
                 except Exception as e:
                     print(f"Error setting value for {prop_name}: {e}")
         
+        # After setting values
+        self.schema = self.resolver.resolve_schema(self.schema)
+
         # Update conditionals after setting values
+        current_data = self.get_value()
         for conditional_widget in self.conditional_widgets:
-            conditional_widget.update_condition(value)
+            conditional_widget.update_condition(current_data)
 
 
 class OneOfWidget(BaseFormWidget):
@@ -985,6 +1293,17 @@ class OneOfWidget(BaseFormWidget):
         self.selector.currentIndexChanged.connect(self.on_selection_changed)
         self.on_selection_changed(0)
     
+    def on_selection_changed(self, index: int):
+        """Handle selection changes in the combo box"""
+        if 0 <= index < len(self.option_widgets):
+            # Update stacked widget to show selected option
+            self.stacked_widget.setCurrentIndex(index)
+            
+            # Get current widget and emit change signal
+            current_widget = self.option_widgets[index]
+            if current_widget:
+                self.update_validation()
+
     def _generate_option_title(self, option: Dict[str, Any], index: int) -> str:
         """Generate enhanced option titles"""
         if "title" in option:
@@ -1277,217 +1596,225 @@ class ConditionalWidget(BaseFormWidget):
                  path: str = "", parent_value_provider: Optional[Callable[[], Any]] = None):
         super().__init__(schema, resolver, validator, path)
         
+        # Add nesting depth tracking first
+        self._nesting_depth = getattr(resolver, '_creation_depth', 0)
+        self.max_nesting = 20
+
+        # Initialize state tracking with better defaults
+        self._last_condition_result = None
+        self._last_parent_data = None  # Changed from {} to None
+        self._current_value = None
+        self._is_updating = False
+        self._update_count = 0
+        self.max_updates = 10
+        self._schema_state = None  # Add schema state tracking
+        
+        # Schema handling
         self.if_schema = schema.get("if", {})
         self.then_schema = schema.get("then", {})
         self.else_schema = schema.get("else", {})
-        self.parent_value_provider = parent_value_provider
-        
-        # Track nesting level to prevent infinite recursion
-        self.nesting_level = getattr(parent_value_provider, '_nesting_level', 0) + 1
-        self.max_nesting = 10
+        self._parent_value_provider = parent_value_provider
         
         self.layout = QVBoxLayout(self)
         self.active_widget = None
-        self._current_value = None
-        self._last_condition_result = None
-        self._is_updating = False
+        self._current_schema = None
         
-        # Prevent infinite recursion
-        if self.nesting_level > self.max_nesting:
-            self._create_error_widget("Maximum conditional nesting exceeded")
-            return
-        
-        # Start with a default widget
+        # Start with default widget
         self._create_default_widget()
-    
-    def _create_error_widget(self, message: str):
-        """Create error display widget"""
-        error_label = QLabel(f"Error: {message}")
-        error_label.setStyleSheet("color: red; font-style: italic;")
-        self.layout.addWidget(error_label)
-        self.active_widget = error_label
-    
+
+    def _get_parent_value(self) -> Any:
+        """Safely get parent value with recursion protection"""
+        if self._parent_value_provider and self._update_count < self.max_updates:
+            self._update_count += 1
+            try:
+                return self._parent_value_provider()
+            except Exception as e:
+                print(f"Error getting parent value: {e}")
+            finally:
+                self._update_count -= 1
+        return None
+
     def _create_default_widget(self):
         """Create initial widget with better schema selection"""
         # Choose the most appropriate default schema
-        default_schema = None
-        
-        if self.then_schema:
-            default_schema = self.then_schema
-        elif self.else_schema:
-            default_schema = self.else_schema
-        else:
-            # Create a minimal fallback that handles common cases
+        default_schema = self.then_schema if self.then_schema else self.else_schema
+        if not default_schema:
             default_schema = {"type": "string", "title": "Conditional Field"}
-        
+            
         self._create_widget_for_schema(default_schema)
-    
-    def update_condition(self, parent_data: Any = None):
-        """Enhanced condition update with recursion protection"""
-        if self._is_updating or self.nesting_level > self.max_nesting:
-            return
-            
-        self._is_updating = True
-        try:
-            if parent_data is None and self.parent_value_provider:
-                try:
-                    parent_data = self.parent_value_provider()
-                except Exception as e:
-                    print(f"Error getting parent data: {e}")
-                    return
-            
-            # Evaluate condition
-            condition_met = self._evaluate_condition(parent_data) if parent_data is not None else None
-            
-            # Only update if condition result changed
-            if condition_met != self._last_condition_result:
-                self._last_condition_result = condition_met
-                
-                # Choose appropriate schema
-                target_schema = self._select_target_schema(condition_met)
-                
-                # Only recreate widget if schema actually changed
-                current_schema = getattr(self, '_current_schema', None)
-                if current_schema != target_schema:
-                    self._current_schema = target_schema
-                    self._create_widget_for_schema(target_schema)
-        finally:
-            self._is_updating = False
     
     def _select_target_schema(self, condition_met: Optional[bool]) -> Dict[str, Any]:
         """Select appropriate schema based on condition result"""
-        if condition_met is True and self.then_schema:
+        # Add empty default schemas if not provided
+        if condition_met and self.then_schema:
             return self.then_schema
         elif condition_met is False and self.else_schema:
             return self.else_schema
-        elif self.then_schema:  # Default to 'then' if condition can't be evaluated
-            return self.then_schema
-        elif self.else_schema:
-            return self.else_schema
-        else:
-            # No schemas available - create empty object
-            return {"type": "object", "properties": {}}
-    
+        elif condition_met and not self.then_schema:
+            return {"type": "object", "properties": {}}  # Empty schema if no 'then' branch
+        elif condition_met is False and not self.else_schema:
+            return {"type": "object", "properties": {}}  # Empty schema if no 'else' branch
+        return self.then_schema if self.then_schema else self.else_schema
+
     def _evaluate_condition(self, data: Any) -> Optional[bool]:
-        """Enhanced condition evaluation with better error handling"""
+        """Improved condition evaluation with better missing field handling"""
         if not self.if_schema:
             return True
             
         try:
-            # Handle complex nested conditions
-            if "allOf" in self.if_schema:
-                return self._evaluate_all_of_condition(data, self.if_schema["allOf"])
-            elif "anyOf" in self.if_schema:
-                return self._evaluate_any_of_condition(data, self.if_schema["anyOf"])
-            elif "oneOf" in self.if_schema:
-                return self._evaluate_one_of_condition(data, self.if_schema["oneOf"])
+            # Ensure we have a dict to work with
+            eval_data = data.copy() if isinstance(data, dict) else {"value": data}
+            
+            # Handle missing required fields
+            if "required" in self.if_schema:
+                required_fields = self.if_schema["required"]
+                missing_fields = [f for f in required_fields if f not in eval_data]
+                if missing_fields:
+                    return False  # Changed from None to False for clearer state handling
+            
+            # Validate against if schema
+            temp_validator = SchemaValidator(self.resolver)
+            validation_errors = temp_validator.validate(eval_data, self.if_schema)
+            return len(validation_errors) == 0
+            
+        except Exception as e:
+            print(f"Error evaluating condition at {self.path}: {e}")
+            return False  # Changed from None to False for clearer state handling
+        
+    def validate_value(self) -> List[ValidationError]:
+        """Override validation to only validate the active schema"""
+        try:
+            value = self.get_value()
+            
+            # Only validate against the current active schema
+            if self._current_schema:
+                return self.validator.validate(value, self._current_schema, self.path)
+            return []
+            
+        except Exception as e:
+            return [ValidationError(str(e), self.path)]
+
+    def update_condition(self, parent_data: Any = None):
+        """Enhanced condition update with better state management"""
+        if self._is_updating or self._update_count >= self.max_updates:
+            return
+
+        self._is_updating = True
+        self._update_count += 1
+
+        try:
+            if parent_data is None:
+                parent_data = self._get_parent_value() or {}
+
+            current_data = dict(parent_data) if isinstance(parent_data, dict) else {"value": parent_data}
+
+            # Compare states using schema-aware comparison
+            current_state = self._get_state_hash(current_data)
+            if current_state == self._schema_state:
+                return
+
+            self._schema_state = current_state
+            self._last_parent_data = current_data
+
+            # Evaluate condition with improved handling
+            condition_met = self._evaluate_condition(current_data)
+            if condition_met != self._last_condition_result:
+                self._last_condition_result = condition_met
+                target_schema = self._select_target_schema(condition_met)
+                # Preserve the previous value, if any
+                old_value = self.get_value()
+
+                if target_schema != self._current_schema:
+                    self._current_schema = target_schema
+                    self._create_widget_for_schema(target_schema)
+                    try:
+                        # Check if old_value validates with the new schema
+                        new_errors = self.validator.validate(old_value, target_schema, self.path) if old_value is not None else ["No value"]
+                        if old_value is not None and not new_errors:
+                            self.active_widget.set_value(old_value)
+                        else:
+                            # Clear value (or you can supply a default) if it doesn't conform
+                            self.active_widget.set_value("")
+                    except Exception as e:
+                        print(f"Error during schema switch/set_value at {self.path}: {e}")
+                print(f"Switching schema at {self.path}: condition_met={condition_met}")
+
+        except Exception as e:
+            print(f"Exception in update_condition at {self.path}: {e}")
+        finally:
+            self._is_updating = False
+            self._update_count -= 1
+            self.update_validation()
+
+    def _create_widget_for_schema(self, schema: Dict[str, Any]):
+        """Create widget with better cleanup"""
+        # Clean up old widget
+        if self.active_widget:
+            self.layout.removeWidget(self.active_widget)
+            self.active_widget.setParent(None)
+            self.active_widget.deleteLater()
+            self.active_widget = None
+        
+        try:
+            # Create new widget with nesting depth check
+            if self._nesting_depth > self.max_nesting:
+                self.active_widget = ConstWidget(
+                    {"const": "Maximum nesting depth exceeded"},
+                    self.resolver,
+                    self.validator,
+                    self.path
+                )
             else:
-                # Simple condition evaluation
-                temp_resolver = SchemaResolver(self.if_schema)
-                temp_validator = SchemaValidator(temp_resolver)
-                errors = temp_validator.validate(data, self.if_schema)
-                return len(errors) == 0
+                self.active_widget = SchemaWidgetFactory.create_widget(
+                    schema,
+                    self.resolver,
+                    self.validator,
+                    self.path,
+                    parent_value_provider=self._parent_value_provider
+                )
+            
+            self.layout.addWidget(self.active_widget)
+            
+            # Connect change signal
+            if hasattr(self.active_widget, 'valueChanged'):
+                self.active_widget.valueChanged.connect(self.update_validation)
                 
         except Exception as e:
-            print(f"Condition evaluation error: {e}")
-            return None
-    
-    def _evaluate_all_of_condition(self, data: Any, schemas: List[Dict]) -> bool:
-        """Evaluate allOf condition"""
-        for schema in schemas:
-            temp_resolver = SchemaResolver(schema)
-            temp_validator = SchemaValidator(temp_resolver)
-            errors = temp_validator.validate(data, schema)
-            if errors:
-                return False
-        return True
-    
-    def _evaluate_any_of_condition(self, data: Any, schemas: List[Dict]) -> bool:
-        """Evaluate anyOf condition"""
-        for schema in schemas:
-            temp_resolver = SchemaResolver(schema)
-            temp_validator = SchemaValidator(temp_resolver)
-            errors = temp_validator.validate(data, schema)
-            if not errors:
-                return True
-        return False
-    
-    def _evaluate_one_of_condition(self, data: Any, schemas: List[Dict]) -> bool:
-        """Evaluate oneOf condition"""
-        valid_count = 0
-        for schema in schemas:
-            temp_resolver = SchemaResolver(schema)
-            temp_validator = SchemaValidator(temp_resolver)
-            errors = temp_validator.validate(data, schema)
-            if not errors:
-                valid_count += 1
-        return valid_count == 1
-    
-    def _create_widget_for_schema(self, schema: Dict[str, Any]):
-        """Enhanced widget creation with nesting level tracking"""
-        # Preserve current value
-        if self.active_widget and hasattr(self.active_widget, 'get_value'):
-            try:
-                self._current_value = self.active_widget.get_value()
-            except:
-                pass
-            
-            # Clean up old widget
-            self.layout.removeWidget(self.active_widget)
-            self.active_widget.deleteLater()
-        
-        # Create new widget with nesting level tracking
-        try:
-            # Create parent value provider with nesting level
-            nested_provider = None
-            if self.parent_value_provider:
-                def wrapped_provider():
-                    result = self.parent_value_provider()
-                    wrapped_provider._nesting_level = self.nesting_level
-                    return result
-                wrapped_provider._nesting_level = self.nesting_level
-                nested_provider = wrapped_provider
-            
-            self.active_widget = SchemaWidgetFactory.create_widget(
-                schema, self.resolver, self.validator, self.path,
-                parent_value_provider=nested_provider
-            )
-        except Exception as e:
             print(f"Error creating conditional widget: {e}")
-            # Fallback to simple string widget
-            fallback_schema = {"type": "string", "title": f"Error: {str(e)}"}
-            self.active_widget = StringWidget(fallback_schema, self.resolver, self.validator, self.path)
-        
-        self.layout.addWidget(self.active_widget)
-        
-        # Restore value if possible and compatible
-        if self._current_value is not None:
-            try:
-                self.active_widget.set_value(self._current_value)
-            except Exception as e:
-                print(f"Could not restore value {self._current_value}: {e}")
-        
-        # Connect signals
-        if hasattr(self.active_widget, 'valueChanged'):
-            self.active_widget.valueChanged.connect(self.update_validation)
-        
-        self.update_validation()
+            self.active_widget = None
     
+    def _get_state_hash(self, data: Any) -> str:
+        """Generate a stable hash of the current state"""
+        try:
+            # Only include relevant fields for condition
+            if isinstance(data, dict) and self.if_schema.get("required"):
+                filtered_data = {
+                    k: v for k, v in data.items() 
+                    if k in self.if_schema["required"]
+                }
+                return json.dumps(filtered_data, sort_keys=True)
+            return json.dumps(data, sort_keys=True)
+        except:
+            return str(data)
+
     def get_value(self) -> Any:
+        """Get value with state caching"""
         if self.active_widget and hasattr(self.active_widget, "get_value"):
             try:
-                return self.active_widget.get_value()
+                self._current_value = self.active_widget.get_value()
+                return self._current_value
             except Exception as e:
-                print(f"ConditionalWidget: Error getting value: {e}")
-                return None
-        return None
+                print(f"Error getting conditional value at {self.path}: {e}")
+        return self._current_value
     
     def set_value(self, value: Any):
+        """Set value with state tracking"""
         if self.active_widget and hasattr(self.active_widget, "set_value"):
             try:
+                self._current_value = value
                 self.active_widget.set_value(value)
             except Exception as e:
-                print(f"ConditionalWidget: Error setting value: {e}")
+                print(f"Error setting conditional value at {self.path}: {e}")
 
 
 class SchemaWidgetFactory:
@@ -1502,15 +1829,21 @@ class SchemaWidgetFactory:
                     parent_value_provider: Optional[Callable[[], Any]] = None) -> BaseFormWidget:
         """Create appropriate widget for schema with better error handling"""
         
-        # Track creation depth to prevent infinite recursion
-        creation_depth = getattr(resolver, '_creation_depth', 0)
-        if creation_depth > 20:
-            error_schema = {"const": "Maximum widget creation depth exceeded"}
-            return ConstWidget(error_schema, resolver, validator, path)
-        
-        resolver._creation_depth = creation_depth + 1
-        
         try:
+            # Reset creation depth at top level
+            if not path:
+                resolver.reset_creation_depth()
+            
+            # Track creation depth
+            resolver._creation_depth += 1
+            if resolver._creation_depth > 20:
+                return ConstWidget(
+                    {"const": "Maximum widget creation depth exceeded"},
+                    resolver,
+                    validator,
+                    path
+                )
+            
             # Handle boolean schemas
             if isinstance(schema, bool):
                 schema = {"type": "object"} if schema else {"not": {}}
@@ -1519,7 +1852,7 @@ class SchemaWidgetFactory:
                 return ConstWidget({"const": "Invalid schema"}, resolver, validator, path)
             
             # Handle if/then/else conditionals FIRST (highest priority)
-            if isinstance(schema, dict) and "if" in schema:
+            if "if" in schema:
                 return ConditionalWidget(schema, resolver, validator, path, parent_value_provider)
             
             # Resolve schema for other cases
@@ -1588,10 +1921,12 @@ class SchemaWidgetFactory:
                     return StringWidget({"type": "string"}, resolver, validator, path)
                     
         except Exception as e:
-            print(f"Error creating widget for schema {schema}: {e}")
-            # Return error widget instead of crashing
+            print(f"Error creating widget for schema at {path}: {e}")
             error_schema = {"const": f"Schema Error: {str(e)}"}
             return ConstWidget(error_schema, resolver, validator, path)
+        finally:
+            # Always decrease creation depth when exiting
+            resolver._creation_depth -= 1
         
         # Final fallback - should rarely reach here now
         return StringWidget({"type": "string", "title": "Unknown Schema"}, resolver, validator, path)
@@ -1679,56 +2014,38 @@ class JsonSchemaForm(QWidget):
         self.form_widget.set_value(data)
         
     def validate_form(self):
-        """Validate entire form and show results"""
+        """Validate entire form and show results in a message box"""
         errors = self.form_widget.validate_value()
-        
+        self.form_widget.update_validation()
         if errors:
-            error_text = "\n".join([f"• {error.path}: {error.message}" for error in errors])
-            QMessageBox.warning(self, "Validation Errors", f"Found {len(errors)} errors:\n\n{error_text}")
+            msg = "\n".join([f"• {e.message}" for e in errors])
+            QMessageBox.warning(self, "Validation Errors", msg)
         else:
-            QMessageBox.information(self, "Validation", "Form is valid!")
-            
+            QMessageBox.information(self, "Validation", "No validation errors found.")
+
     def show_data(self):
-        """Show current form data as JSON"""
+        """Show current form data in a message box"""
         try:
             data = self.get_form_data()
             json_text = json.dumps(data, indent=2, default=str)
-            
-            # Create dialog to show JSON
-            from PySide6.QtWidgets import QDialog, QTextEdit
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Form Data")
-            dialog.setMinimumSize(500, 400)
-            
-            layout = QVBoxLayout(dialog)
-            text_edit = QTextEdit()
-            text_edit.setPlainText(json_text)
-            layout.addWidget(text_edit)
-            
-            button_layout = QHBoxLayout()
-            close_button = QPushButton("Close")
-            close_button.clicked.connect(dialog.accept)
-            button_layout.addStretch()
-            button_layout.addWidget(close_button)
-            layout.addLayout(button_layout)
-            
-            dialog.exec()
-            
+            QMessageBox.information(self, "Form Data", json_text)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to get form data: {str(e)}")
-            
+            QMessageBox.critical(self, "Error", f"Failed to get form data: {e}")
+
     def clear_form(self):
-        """Clear all form data"""
-        # This would require implementing clear methods on all widgets
-        reply = QMessageBox.question(self, "Clear Form", "Are you sure you want to clear all data?")
+        """Clear all form data with confirmation"""
+        reply = QMessageBox.question(
+            self,
+            "Clear Form",
+            "Are you sure you want to clear all form data?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
         if reply == QMessageBox.Yes:
-            # Recreate the form widget
             old_widget = self.form_widget
             self.form_widget = SchemaWidgetFactory.create_widget(
                 self.resolver.root_schema, self.resolver, self.validator
             )
-            
-            # Replace in layout
             layout = self.layout()
             layout.replaceWidget(old_widget, self.form_widget)
             old_widget.deleteLater()
