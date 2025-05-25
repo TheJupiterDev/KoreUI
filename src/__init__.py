@@ -1,9 +1,6 @@
 from .kore import JsonSchemaForm
 from .loader import load_schema
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
-__all__ = [
-    "JsonSchemaForm",
-    "load_schema",
-]
+__all__ = ["JsonSchemaForm", "load_schema",]
