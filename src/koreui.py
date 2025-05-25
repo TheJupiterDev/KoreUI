@@ -1,20 +1,14 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox, 
-    QDoubleSpinBox, QComboBox, QCheckBox, QGroupBox, QPushButton, 
-    QApplication, QScrollArea, QTextEdit, QDateEdit, QTimeEdit, 
-    QDateTimeEdit, QTabWidget, QFrame, QSplitter, QTreeWidget, 
-    QTreeWidgetItem, QHeaderView, QFormLayout, QMessageBox,
-    QStackedWidget, QSlider, QProgressBar, QDial, QLCDNumber,
-    QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem
+    QDoubleSpinBox, QComboBox, QCheckBox, QPushButton, QScrollArea, 
+    QTextEdit, QDateEdit, QTimeEdit, QDateTimeEdit, QFrame, QMessageBox,
+    QStackedWidget
 )
-from PySide6.QtCore import Qt, QDate, QTime, QDateTime, QTimer, Signal, QObject, QUrl, QCoreApplication
-from PySide6.QtGui import QValidator, QRegularExpressionValidator, QFont, QPalette, QColor
+from PySide6.QtCore import Qt, QDate, QTime, QDateTime, Signal
+from PySide6.QtGui import QRegularExpressionValidator
 import json
 import re
-import uuid
-import base64
-from datetime import datetime, date, time
-from typing import Any, Dict, List, Optional, Union, Callable, Set
+from typing import Any, Dict, List, Optional, Union, Callable
 from urllib.parse import urlparse
 import ipaddress
 import email.utils
@@ -170,6 +164,7 @@ QGroupBox::title {
     margin: 8px 0;
 }
 """
+
 
 class ValidationError:
     """Custom validation error class (not an Exception)"""
@@ -648,6 +643,8 @@ class BaseFormWidget(QWidget):
         """Validate current value against schema"""
         try:
             value = self.get_value()
+            if value is None and self.schema.get("type") == "array":
+                value = []
             return self.validator.validate(value, self.schema, self.path)
         except Exception as e:
             return [ValidationError(str(e), self.path)]
@@ -1043,7 +1040,32 @@ class ArrayWidget(BaseFormWidget):
     
     def get_value(self) -> List[Any]:
         """Get array values"""
-        return [widget.get_value() for widget in self.item_widgets]
+        values = []
+        for i in range(self.items_layout.count() - 1):
+            item_container = self.items_layout.itemAt(i).widget()
+            if not item_container:
+                continue
+                
+            container_layout = item_container.layout()
+            if not container_layout:
+                continue
+                
+            widget_item = container_layout.itemAt(1)
+            if not widget_item:
+                continue
+                
+            item_widget = widget_item.widget()
+            if not hasattr(item_widget, 'get_value'):
+                continue
+                
+            try:
+                value = item_widget.get_value()
+                if value is not None:
+                    values.append(value)
+            except Exception as e:
+                print(f"Error getting array item value: {e}")
+        
+        return values
     
     def set_value(self, value: List[Any]):
         """Set array values"""
@@ -1207,31 +1229,39 @@ class ObjectWidget(BaseFormWidget):
                 errors.append(ValidationError(f"Required property '{prop_name}' is missing", path))
 
     def get_value(self) -> Dict[str, Any]:
-        result = {}
-        for prop_name, widget in self.property_widgets.items():
-            try:
-                value = widget.get_value()
-                if value is not None:
-                    # Filter keys that are actually in the current schema
-                    if prop_name in self.schema.get("properties", {}):
-                        prop_schema = self.schema["properties"][prop_name]
+            result = {}
+            for prop_name, widget in self.property_widgets.items():
+                if widget is None or not hasattr(widget, 'get_value'):
+                    continue
+                    
+                try:
+                    # Check if widget is properly initialized
+                    if not widget.isVisible() and isinstance(widget, (OneOfWidget, AnyOfWidget)):
+                        continue
+                        
+                    value = widget.get_value()
+                    if value is not None:
+                        # Filter keys that are actually in the current schema
+                        if prop_name in self.schema.get("properties", {}):
+                            prop_schema = self.schema["properties"][prop_name]
 
-                        # If this is a conditional schema, apply its 'if' to see if 'then' or 'else' is active
-                        if "if" in prop_schema and isinstance(widget, ConditionalWidget):
-                            try:
-                                active_value = value
-                                allowed_keys = set(widget._current_schema.get("properties", {}).keys()) if widget._current_schema else set()
-                                if isinstance(active_value, dict):
-                                    active_value = {k: v for k, v in active_value.items() if k in allowed_keys}
-                                result[prop_name] = active_value
-                            except Exception as e:
-                                print(f"Error filtering conditional value for {prop_name}: {e}")
-                        else:
-                            result[prop_name] = value
-            except Exception as e:
-                print(f"Error getting value for {prop_name}: {e}")
-        return result
-        
+                            # Handle conditional schemas
+                            if "if" in prop_schema and isinstance(widget, ConditionalWidget):
+                                try:
+                                    active_value = value
+                                    allowed_keys = set(widget._current_schema.get("properties", {}).keys()) if widget._current_schema else set()
+                                    if isinstance(active_value, dict):
+                                        active_value = {k: v for k, v in active_value.items() if k in allowed_keys}
+                                    result[prop_name] = active_value
+                                except Exception:
+                                    pass
+                            else:
+                                result[prop_name] = value
+                except Exception:
+                    pass
+                    
+            return result
+    
     def set_value(self, value: Dict[str, Any]):
         if not isinstance(value, dict):
             return
@@ -1352,6 +1382,23 @@ class OneOfWidget(BaseFormWidget):
         except:
             return {}
     
+    def get_value(self) -> Any:
+        current_index = self.selector.currentIndex()
+        if 0 <= current_index < len(self.option_widgets):
+            current_widget = self.option_widgets[current_index]
+            try:
+                value = current_widget.get_value()
+                if isinstance(value, dict):
+                    schema_option = self.schema["oneOf"][current_index]
+                    if "properties" in schema_option and "type" in schema_option["properties"]:
+                        type_value = schema_option["properties"]["type"].get("const")
+                        if type_value:
+                            value["type"] = type_value
+                return value
+            except Exception as e:
+                print(f"Error getting oneOf value: {e}")
+        return None
+
     def set_value(self, value: Any):
         """Enhanced value setting with better matching"""
         best_match_index = 0
