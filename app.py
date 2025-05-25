@@ -1,7 +1,7 @@
 import sys
 from PySide6.QtWidgets import QApplication, QScrollArea, QVBoxLayout, QWidget
 
-from src.koreui import JsonSchemaForm
+from src.kore import JsonSchemaForm
 from src.loader import load_schema
 
 

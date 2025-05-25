@@ -1,4 +1,4 @@
-from .koreui import (
+from .kore import (
     JsonSchemaForm,
     SchemaResolver,
     SchemaValidator,
@@ -6,7 +6,7 @@ from .koreui import (
 )
 from .loader import load_schema, load_schema_with_defaults
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "JsonSchemaForm",
