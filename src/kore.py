@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Union, Callable
 from urllib.parse import urlparse
 import ipaddress
 import email.utils
+import os
 
 
 
@@ -38,7 +39,7 @@ class SchemaResolver:
         self.resolution_stack = []
         self.composition_depth = 0
         self.max_depth = 50
-        self._creation_depth = 0  # Add creation depth tracking
+        self._creation_depth = 0
     
     def reset_creation_depth(self):
         """Reset the creation depth counter"""
@@ -49,64 +50,45 @@ class SchemaResolver:
         if len(self.resolution_stack) > self.max_depth:
             raise ValidationError(f"Maximum schema resolution depth exceeded at {current_path}")
         self.resolution_stack.append(current_path)
-        
+
         try:
             if isinstance(schema, bool):
                 return {"type": "object"} if schema else {"not": {}}
-            
+
             if not isinstance(schema, dict):
                 return {}
-            
-            self.composition_depth += 1
-            # Handle $ref first
+
             if "$ref" in schema:
                 return self._resolve_ref(schema["$ref"], current_path)
-                
-            if "if" in schema:
-                resolved = dict(schema)
-                resolved["if"] = self.resolve_schema(schema["if"], f"{current_path}/if")
-                # defer then/else resolution to runtime conditional handling
-                if "then" in schema:
-                    resolved["then"] = schema["then"]
-                if "else" in schema:
-                    resolved["else"] = schema["else"]
-                return resolved
 
-            # Handle composition keywords with better nesting support
             resolved = dict(schema)
-            
-            # Handle allOf (merge schemas)
+
+            # Handle composition keywords
             if "allOf" in schema:
                 resolved = self._merge_all_of(schema["allOf"], resolved, current_path)
-                
-            # Handle oneOf/anyOf (preserve for widget creation)
+
             if "oneOf" in schema:
                 resolved["oneOf"] = [
                     self.resolve_schema(sub_schema, f"{current_path}/oneOf/{i}")
                     for i, sub_schema in enumerate(schema["oneOf"])
                 ]
-                
+
             if "anyOf" in schema:
                 resolved["anyOf"] = [
                     self.resolve_schema(sub_schema, f"{current_path}/anyOf/{i}")
                     for i, sub_schema in enumerate(schema["anyOf"])
                 ]
-                
-            # Handle items schema for arrays
+
             if "items" in schema:
                 resolved["items"] = self.resolve_schema(schema["items"], f"{current_path}/items")
-                
-            # Handle properties for objects
+
             if "properties" in schema:
-                resolved_props = {}
-                for prop_name, prop_schema in schema["properties"].items():
-                    resolved_props[prop_name] = self.resolve_schema(
-                        prop_schema, f"{current_path}/properties/{prop_name}"
-                    )
-                resolved["properties"] = resolved_props
-                
-            return resolved   
-        
+                resolved["properties"] = {
+                    prop_name: self.resolve_schema(prop_schema, f"{current_path}/properties/{prop_name}")
+                    for prop_name, prop_schema in schema["properties"].items()
+                }
+
+            return resolved
         finally:
             self.resolution_stack.pop()
         
@@ -158,6 +140,85 @@ class SchemaResolver:
                 result[key] = value
                 
         return result
+
+    def _resolve_ref(self, ref: str, current_path: str) -> Dict[str, Any]:
+        """
+        Resolve a $ref reference in the schema.
+        Supports internal references (e.g., #/definitions/...) and external references (e.g., file paths or URLs).
+        """
+        if ref in self.refs_cache:
+            return self.refs_cache[ref]
+
+        if ref in self.resolution_stack:
+            # Circular reference detected, return a placeholder
+            return {"$ref": ref}
+
+        self.resolution_stack.append(ref)
+        try:
+            if ref.startswith("#"):
+                # Internal reference
+                resolved = self._resolve_internal_ref(ref)
+            else:
+                # External reference
+                resolved = self._resolve_external_ref(ref)
+
+            # Cache the resolved reference
+            self.refs_cache[ref] = resolved
+            return resolved
+        finally:
+            self.resolution_stack.pop()
+
+    def _resolve_internal_ref(self, ref: str) -> Dict[str, Any]:
+        """
+        Resolve an internal reference (e.g., #/definitions/...).
+        """
+        parts = ref.lstrip("#/").split("/")
+        schema = self.root_schema
+        for part in parts:
+            if not isinstance(schema, dict) or part not in schema:
+                raise ValidationError(f"Invalid internal $ref: {ref}")
+            schema = schema[part]
+        return self.resolve_schema(schema, ref)
+
+    def _resolve_external_ref(self, ref: str) -> Dict[str, Any]:
+        """
+        Resolve an external reference (e.g., file paths or URLs).
+        """
+        parsed_url = urlparse(ref)
+        if parsed_url.scheme in ["http", "https"]:
+            # Handle HTTP/HTTPS references
+            return self._fetch_remote_schema(ref)
+        elif os.path.isfile(parsed_url.path):
+            # Handle file references
+            return self._load_local_schema(parsed_url.path, parsed_url.fragment)
+        else:
+            raise ValidationError(f"Unsupported external $ref: {ref}")
+
+    def _fetch_remote_schema(self, url: str) -> Dict[str, Any]:
+        """
+        Fetch a remote schema via HTTP/HTTPS.
+        """
+        import requests
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            schema = response.json()
+            return self.resolve_schema(schema, url)
+        except Exception as e:
+            raise ValidationError(f"Failed to fetch remote schema from {url}: {e}")
+
+    def _load_local_schema(self, file_path: str, fragment: str) -> Dict[str, Any]:
+        """
+        Load a local schema from a file and resolve the fragment if provided.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                schema = json.load(f)
+            if fragment:
+                return self._resolve_internal_ref(f"#{fragment}")
+            return self.resolve_schema(schema, file_path)
+        except Exception as e:
+            raise ValidationError(f"Failed to load local schema from {file_path}: {e}")
 
 
 class SchemaValidator:
