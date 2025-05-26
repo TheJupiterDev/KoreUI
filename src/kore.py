@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Optional, Union, Callable
 from urllib.parse import urlparse
 import ipaddress
 import email.utils
+import os
 
 
-
-class ValidationError:
+class ValidationError(Exception):
     """Custom validation error class (not an Exception)"""
     def __init__(self, message: str, path: str = "", schema_path: str = ""):
         self.message = message
@@ -38,7 +38,7 @@ class SchemaResolver:
         self.resolution_stack = []
         self.composition_depth = 0
         self.max_depth = 50
-        self._creation_depth = 0  # Add creation depth tracking
+        self._creation_depth = 0
     
     def reset_creation_depth(self):
         """Reset the creation depth counter"""
@@ -49,64 +49,45 @@ class SchemaResolver:
         if len(self.resolution_stack) > self.max_depth:
             raise ValidationError(f"Maximum schema resolution depth exceeded at {current_path}")
         self.resolution_stack.append(current_path)
-        
+
         try:
             if isinstance(schema, bool):
                 return {"type": "object"} if schema else {"not": {}}
-            
+
             if not isinstance(schema, dict):
                 return {}
-            
-            self.composition_depth += 1
-            # Handle $ref first
+
             if "$ref" in schema:
                 return self._resolve_ref(schema["$ref"], current_path)
-                
-            if "if" in schema:
-                resolved = dict(schema)
-                resolved["if"] = self.resolve_schema(schema["if"], f"{current_path}/if")
-                # defer then/else resolution to runtime conditional handling
-                if "then" in schema:
-                    resolved["then"] = schema["then"]
-                if "else" in schema:
-                    resolved["else"] = schema["else"]
-                return resolved
 
-            # Handle composition keywords with better nesting support
             resolved = dict(schema)
-            
-            # Handle allOf (merge schemas)
+
+            # Handle composition keywords
             if "allOf" in schema:
                 resolved = self._merge_all_of(schema["allOf"], resolved, current_path)
-                
-            # Handle oneOf/anyOf (preserve for widget creation)
+
             if "oneOf" in schema:
                 resolved["oneOf"] = [
                     self.resolve_schema(sub_schema, f"{current_path}/oneOf/{i}")
                     for i, sub_schema in enumerate(schema["oneOf"])
                 ]
-                
+
             if "anyOf" in schema:
                 resolved["anyOf"] = [
                     self.resolve_schema(sub_schema, f"{current_path}/anyOf/{i}")
                     for i, sub_schema in enumerate(schema["anyOf"])
                 ]
-                
-            # Handle items schema for arrays
+
             if "items" in schema:
                 resolved["items"] = self.resolve_schema(schema["items"], f"{current_path}/items")
-                
-            # Handle properties for objects
+
             if "properties" in schema:
-                resolved_props = {}
-                for prop_name, prop_schema in schema["properties"].items():
-                    resolved_props[prop_name] = self.resolve_schema(
-                        prop_schema, f"{current_path}/properties/{prop_name}"
-                    )
-                resolved["properties"] = resolved_props
-                
-            return resolved   
-        
+                resolved["properties"] = {
+                    prop_name: self.resolve_schema(prop_schema, f"{current_path}/properties/{prop_name}")
+                    for prop_name, prop_schema in schema["properties"].items()
+                }
+
+            return resolved
         finally:
             self.resolution_stack.pop()
         
@@ -158,6 +139,85 @@ class SchemaResolver:
                 result[key] = value
                 
         return result
+
+    def _resolve_ref(self, ref: str, current_path: str) -> Dict[str, Any]:
+        """
+        Resolve a $ref reference in the schema.
+        Supports internal references (e.g., #/definitions/...) and external references (e.g., file paths or URLs).
+        """
+        if ref in self.refs_cache:
+            return self.refs_cache[ref]
+
+        if ref in self.resolution_stack:
+            # Circular reference detected, return a placeholder
+            return {"$ref": ref}
+
+        self.resolution_stack.append(ref)
+        try:
+            if ref.startswith("#"):
+                # Internal reference
+                resolved = self._resolve_internal_ref(ref)
+            else:
+                # External reference
+                resolved = self._resolve_external_ref(ref)
+
+            # Cache the resolved reference
+            self.refs_cache[ref] = resolved
+            return resolved
+        finally:
+            self.resolution_stack.pop()
+
+    def _resolve_internal_ref(self, ref: str) -> Dict[str, Any]:
+        """
+        Resolve an internal reference (e.g., #/definitions/...).
+        """
+        parts = ref.lstrip("#/").split("/")
+        schema = self.root_schema
+        for part in parts:
+            if not isinstance(schema, dict) or part not in schema:
+                raise ValidationError(f"Invalid internal $ref: {ref}")
+            schema = schema[part]
+        return self.resolve_schema(schema, ref)
+
+    def _resolve_external_ref(self, ref: str) -> Dict[str, Any]:
+        """
+        Resolve an external reference (e.g., file paths or URLs).
+        """
+        parsed_url = urlparse(ref)
+        if parsed_url.scheme in ["http", "https"]:
+            # Handle HTTP/HTTPS references
+            return self._fetch_remote_schema(ref)
+        elif os.path.isfile(parsed_url.path):
+            # Handle file references
+            return self._load_local_schema(parsed_url.path, parsed_url.fragment)
+        else:
+            raise ValidationError(f"Unsupported external $ref: {ref}")
+
+    def _fetch_remote_schema(self, url: str) -> Dict[str, Any]:
+        """
+        Fetch a remote schema via HTTP/HTTPS.
+        """
+        import requests
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            schema = response.json()
+            return self.resolve_schema(schema, url)
+        except Exception as e:
+            raise ValidationError(f"Failed to fetch remote schema from {url}: {e}")
+
+    def _load_local_schema(self, file_path: str, fragment: str) -> Dict[str, Any]:
+        """
+        Load a local schema from a file and resolve the fragment if provided.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                schema = json.load(f)
+            if fragment:
+                return self._resolve_internal_ref(f"#{fragment}")
+            return self.resolve_schema(schema, file_path)
+        except Exception as e:
+            raise ValidationError(f"Failed to load local schema from {file_path}: {e}")
 
 
 class SchemaValidator:
@@ -1292,16 +1352,18 @@ class ObjectWidget(BaseFormWidget):
 
 
 class OneOfWidget(BaseFormWidget):
-    """Widget for oneOf schema composition"""
+    """Widget for oneOf schema composition with lazy widget creation"""
     
     def __init__(self, schema: Dict[str, Any], resolver: SchemaResolver, validator: SchemaValidator, path: str = ""):
         super().__init__(schema, resolver, validator, path)
         
-        self.option_widgets = []
+        self.options = schema["oneOf"]
         self.current_widget = None
+        self.current_index = -1
         
         layout = QVBoxLayout(self)
 
+        # Add title/description
         if path:
             if "title" in schema:
                 title_label = QLabel(schema["title"])
@@ -1313,46 +1375,53 @@ class OneOfWidget(BaseFormWidget):
                 desc_label.setWordWrap(True)
                 layout.addWidget(desc_label)
         
+        # Create selector
         self.selector = QComboBox()
-        
-        options = schema["oneOf"]
-        for i, option in enumerate(options):
+        for i, option in enumerate(self.options):
             title = self._generate_option_title(option, i)
             self.selector.addItem(title)
         
         layout.addWidget(QLabel("Select Option:"))
         layout.addWidget(self.selector)
         
-        # Stacked widget container
-        self.stacked_widget = QStackedWidget()
-        layout.addWidget(self.stacked_widget)
-        
-        # Create widgets for each option with parent value provider
-        for i, option in enumerate(options):
-            option_widget = SchemaWidgetFactory.create_widget(
-                option, self.resolver, self.validator, f"{path}/oneOf[{i}]",
-                parent_value_provider=lambda: self._get_parent_context()
-            )
-            self.option_widgets.append(option_widget)
-            self.stacked_widget.addWidget(option_widget)
-            option_widget.valueChanged.connect(self.update_validation)
+        # Container for the current widget
+        self.widget_container = QWidget()
+        self.widget_layout = QVBoxLayout(self.widget_container)
+        layout.addWidget(self.widget_container)
         
         layout.addWidget(self.error_widget)
         
         self.selector.currentIndexChanged.connect(self.on_selection_changed)
-        self.on_selection_changed(0)
-    
+        
     def on_selection_changed(self, index: int):
-        """Handle selection changes in the combo box"""
-        if 0 <= index < len(self.option_widgets):
-            # Update stacked widget to show selected option
-            self.stacked_widget.setCurrentIndex(index)
+        """Create and show widget only when option is selected"""
+        if index == self.current_index:
+            return
             
-            # Get current widget and emit change signal
-            current_widget = self.option_widgets[index]
-            if current_widget:
-                self.update_validation()
-
+        self.current_index = index
+        
+        # Clean up previous widget
+        if self.current_widget:
+            self.widget_layout.removeWidget(self.current_widget)
+            self.current_widget.setParent(None)
+            self.current_widget.deleteLater()
+            self.current_widget = None
+            
+        # Create new widget only if a valid option is selected
+        if 0 <= index < len(self.options):
+            option_schema = self.options[index]
+            self.current_widget = SchemaWidgetFactory.create_widget(
+                option_schema, 
+                self.resolver,
+                self.validator,
+                f"{self.path}/oneOf[{index}]",
+                parent_value_provider=lambda: self._get_parent_context()
+            )
+            self.widget_layout.addWidget(self.current_widget)
+            self.current_widget.valueChanged.connect(self.update_validation)
+            
+        self.update_validation()
+    
     def _generate_option_title(self, option: Dict[str, Any], index: int) -> str:
         """Generate enhanced option titles"""
         if "title" in option:
@@ -1361,7 +1430,6 @@ class OneOfWidget(BaseFormWidget):
         if "const" in option:
             return f"Constant: {option['const']}"
         
-        # Handle nested compositions in titles
         if "oneOf" in option:
             return f"Choice of {len(option['oneOf'])} options"
         
@@ -1379,15 +1447,13 @@ class OneOfWidget(BaseFormWidget):
             if len(props) <= 3:
                 prop_str = ", ".join(props)
                 return f"Object ({prop_str})"
-            else:
-                return f"Object ({len(props)} properties)"
+            return f"Object ({len(props)} properties)"
         
         if "items" in option and option.get("type") == "array":
             items_schema = option["items"]
             if "type" in items_schema:
                 return f"Array of {items_schema['type']}"
-            else:
-                return "Array"
+            return "Array"
         
         if "type" in option:
             return f"Type: {option['type']}"
@@ -1402,13 +1468,12 @@ class OneOfWidget(BaseFormWidget):
             return {}
     
     def get_value(self) -> Any:
-        current_index = self.selector.currentIndex()
-        if 0 <= current_index < len(self.option_widgets):
-            current_widget = self.option_widgets[current_index]
+        """Get value from current widget"""
+        if self.current_widget:
             try:
-                value = current_widget.get_value()
-                if isinstance(value, dict):
-                    schema_option = self.schema["oneOf"][current_index]
+                value = self.current_widget.get_value()
+                if isinstance(value, dict) and 0 <= self.current_index < len(self.options):
+                    schema_option = self.options[self.current_index]
                     if "properties" in schema_option and "type" in schema_option["properties"]:
                         type_value = schema_option["properties"]["type"].get("const")
                         if type_value:
@@ -1417,53 +1482,44 @@ class OneOfWidget(BaseFormWidget):
             except Exception as e:
                 print(f"Error getting oneOf value: {e}")
         return None
-
+    
     def set_value(self, value: Any):
-        """Enhanced value setting with better matching"""
-        best_match_index = 0
+        """Set value with lazy widget creation"""
+        best_match_index = -1
         best_match_score = float('inf')
         
-        # Try each option to find the best match
-        for i, widget in enumerate(self.option_widgets):
+        # Find best matching option
+        for i, option_schema in enumerate(self.options):
             try:
-                # Create a copy to test without affecting the widget
-                test_widget = SchemaWidgetFactory.create_widget(
-                    self.schema["oneOf"][i], self.resolver, self.validator, f"test_{i}"
-                )
-                test_widget.set_value(value)
-                errors = test_widget.validate_value()
+                errors = self.validator.validate(value, option_schema)
                 error_score = len(errors)
                 
-                # Prefer options with fewer validation errors
                 if error_score < best_match_score:
                     best_match_score = error_score
                     best_match_index = i
                     
-                # If we find a perfect match, use it immediately
                 if error_score == 0:
-                    self.selector.setCurrentIndex(i)
-                    widget.set_value(value)
-                    return
-                    
-            except Exception as e:
+                    break
+            except:
                 continue
         
-        # Use the best match we found
-        self.selector.setCurrentIndex(best_match_index)
-        try:
-            self.option_widgets[best_match_index].set_value(value)
-        except Exception as e:
-            print(f"Could not set value on best match option: {e}")
+        # Set the best matching option
+        if best_match_index >= 0:
+            self.selector.setCurrentIndex(best_match_index)
+            # Widget will be created by on_selection_changed
+            if self.current_widget:
+                self.current_widget.set_value(value)
 
 
 class AnyOfWidget(BaseFormWidget):
-    """Widget for anyOf schema composition"""
+    """Widget for anyOf schema composition with lazy widget creation"""
     
     def __init__(self, schema: Dict[str, Any], resolver: SchemaResolver, validator: SchemaValidator, path: str = ""):
         super().__init__(schema, resolver, validator, path)
         
-        self.option_widgets = []
-        self.checkboxes = []
+        self.options = schema["anyOf"]
+        self.active_widgets = {}  # Dictionary to store active widgets
+        self.current_indices = set()  # Track which options are active
         
         layout = QVBoxLayout(self)
 
@@ -1480,49 +1536,31 @@ class AnyOfWidget(BaseFormWidget):
 
         layout.addWidget(QLabel("Select one or more options:"))
         
-        options = schema["anyOf"]
-        for i, option in enumerate(options):
-            # Better title generation
-            title = option.get("title", f"Option {i + 1}")
-            
-            if "const" in option:
-                title = f"Constant: {option['const']}"
-            elif option.get("type") == "object":
-                if "properties" in option:
-                    props = list(option["properties"].keys())
-                    if len(props) == 1:
-                        title = props[0].replace("_", " ").title()
-                    elif "email" in props:
-                        title = "Email Contact"
-                    elif "phone" in props:
-                        title = "Phone Contact"
-                    else:
-                        title = f"Contact Info ({', '.join(props)})"
-            elif "type" in option:
-                title = option["type"].title()
-                
+        # Create checkboxes and widget containers
+        self.checkboxes = []
+        self.widget_containers = []
+        
+        for i, option in enumerate(self.options):
+            title = self._generate_option_title(option, i)
             checkbox = QCheckBox(title)
-            option_widget = SchemaWidgetFactory.create_widget(
-                option, self.resolver, self.validator, f"{path}/anyOf[{i}]",
-                parent_value_provider=lambda: self.get_value()
-            )
-            
-            # Initially hidden
-            option_widget.setVisible(False)
-            
             self.checkboxes.append(checkbox)
-            self.option_widgets.append(option_widget)
+            
+            # Create container for this option's widget
+            container = QWidget()
+            container_layout = QVBoxLayout(container)
+            container.setLayout(container_layout)
+            container.setVisible(False)
+            self.widget_containers.append(container)
             
             layout.addWidget(checkbox)
-            layout.addWidget(option_widget)
+            layout.addWidget(container)
             
-            checkbox.toggled.connect(option_widget.setVisible)
-            checkbox.toggled.connect(self.update_validation)
-            option_widget.valueChanged.connect(self.update_validation)
+            # Connect checkbox to lazy widget creation
+            checkbox.toggled.connect(lambda checked, idx=i: self._handle_option_toggled(idx, checked))
             
         layout.addWidget(self.error_widget)
-    
-    def _get_option_title(self, option: Dict[str, Any], index: int) -> str:
+        
+    def _generate_option_title(self, option: Dict[str, Any], index: int) -> str:
         """Generate a meaningful title for an option"""
         if "title" in option:
             return option["title"]
@@ -1531,40 +1569,82 @@ class AnyOfWidget(BaseFormWidget):
             return f"Constant: {option['const']}"
         
         if "properties" in option and option.get("type") == "object":
-            # List key properties
-            props = list(option["properties"].keys())[:3]  # First 3 properties
-            prop_str = ", ".join(props)
-            if len(option["properties"]) > 3:
-                prop_str += "..."
-            return f"Object ({prop_str})"
+            props = list(option["properties"].keys())
+            if len(props) <= 3:
+                prop_str = ", ".join(props)
+                return f"Object ({prop_str})"
+            return f"Object ({len(props)} properties)"
         
         if "type" in option:
             return f"Type: {option['type']}"
         
         return f"Option {index + 1}"
+    
+    def _handle_option_toggled(self, index: int, checked: bool):
+        """Create or destroy widget when option is toggled"""
+        if checked:
+            # Create widget if it doesn't exist
+            if index not in self.active_widgets:
+                option_schema = self.options[index]
+                widget = SchemaWidgetFactory.create_widget(
+                    option_schema,
+                    self.resolver,
+                    self.validator,
+                    f"{self.path}/anyOf[{index}]",
+                    parent_value_provider=lambda: self.get_value()
+                )
+                self.active_widgets[index] = widget
+                self.widget_containers[index].layout().addWidget(widget)
+                widget.valueChanged.connect(self.update_validation)
+            
+            self.widget_containers[index].setVisible(True)
+            self.current_indices.add(index)
+            
+        else:
+            # Clean up widget
+            if index in self.active_widgets:
+                widget = self.active_widgets[index]
+                self.widget_containers[index].layout().removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+                del self.active_widgets[index]
+                self.widget_containers[index].setVisible(False)
+                self.current_indices.remove(index)
         
-    def get_value(self) -> Any:
-        """Return value from the first enabled option (not a list)"""
-        for i, (checkbox, widget) in enumerate(zip(self.checkboxes, self.option_widgets)):
-            if checkbox.isChecked():
-                return widget.get_value()
-        return None
+        self.update_validation()
+        
+    def get_value(self) -> List[Any]:
+        """Get values from all active widgets"""
+        values = []
+        for index in sorted(self.current_indices):
+            if index in self.active_widgets:
+                value = self.active_widgets[index].get_value()
+                if value is not None:
+                    values.append(value)
+        return values[0] if values else None
         
     def set_value(self, value: Any):
-        # Try to find which option matches the value
-        for i, widget in enumerate(self.option_widgets):
+        """Set value by finding matching schema"""
+        # Reset current state
+        for checkbox in self.checkboxes:
+            checkbox.setChecked(False)
+            
+        # Find matching schema
+        for i, option_schema in enumerate(self.options):
             try:
-                widget.set_value(value)
-                errors = widget.validate_value()
+                errors = self.validator.validate(value, option_schema)
                 if not errors:
+                    # Found a match - create widget and set value
                     self.checkboxes[i].setChecked(True)
-                    return
+                    if i in self.active_widgets:
+                        self.active_widgets[i].set_value(value)
+                    break
             except:
                 continue
 
 
 class AllOfWidget(BaseFormWidget):
-    """Widget for allOf schema composition"""
+    """Widget for allOf schema composition with lazy widget creation"""
     
     def __init__(self, schema: Dict[str, Any], resolver: SchemaResolver, validator: SchemaValidator, path: str = ""):
         super().__init__(schema, resolver, validator, path)
@@ -1588,95 +1668,129 @@ class AllOfWidget(BaseFormWidget):
             for sub_schema in schema.get("allOf", [])
         )
         
-        if self.has_nested_compositions:
-            # Handle complex allOf with nested compositions
-            self._create_complex_allof_widget(schema, layout)
-        else:
-            # Simple allOf - merge schemas and create single widget
-            merged_schema = self.resolver.resolve_schema(schema)
-            self.merged_widget = SchemaWidgetFactory.create_widget(
-                merged_schema, self.resolver, self.validator, path
-            )
-            layout.addWidget(self.merged_widget)
-            self.merged_widget.valueChanged.connect(self.update_validation)
+        # Create container for widgets
+        self.widget_container = QWidget()
+        self.widget_layout = QVBoxLayout(self.widget_container)
+        layout.addWidget(self.widget_container)
         
+        # Store schemas for lazy creation
+        self.all_of_schemas = schema.get("allOf", [])
+        self.sub_widgets = []
+        self.merged_widget = None
+        
+        # Create appropriate widget type based on composition
+        if self.has_nested_compositions:
+            self._create_complex_widgets()
+        else:
+            self._create_merged_widget()
+            
         layout.addWidget(self.error_widget)
     
-    def _create_complex_allof_widget(self, schema: Dict[str, Any], layout: QVBoxLayout):
-        """Create widget for allOf with nested compositions"""
-        self.sub_widgets = []
-        all_of_schemas = schema["allOf"]
+    def _create_complex_widgets(self):
+        """Lazily create widgets for complex allOf with nested compositions"""
+        # Clean up existing widgets
+        if self.sub_widgets:
+            for widget in self.sub_widgets:
+                self.widget_layout.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+            self.sub_widgets.clear()
         
-        # Create a container for all sub-widgets
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        
-        # Create widgets for each allOf schema
-        for i, sub_schema in enumerate(all_of_schemas):
-            sub_path = f"{self.path}/allOf[{i}]"
-            
-            # Add separator for visual clarity
+        # Create widgets for each sub-schema
+        for i, sub_schema in enumerate(self.all_of_schemas):
+            # Add separator between widgets
             if i > 0:
                 separator = QFrame()
                 separator.setFrameShape(QFrame.HLine)
                 separator.setProperty("class", "allof-separator")
-                container_layout.addWidget(separator)
+                self.widget_layout.addWidget(separator)
             
-            # Create widget for this sub-schema
+            # Create sub-widget
             sub_widget = SchemaWidgetFactory.create_widget(
-                sub_schema, self.resolver, self.validator, sub_path,
+                sub_schema,
+                self.resolver,
+                self.validator,
+                f"{self.path}/allOf[{i}]",
                 parent_value_provider=lambda: self.get_combined_value()
             )
             
-            container_layout.addWidget(sub_widget)
+            self.widget_layout.addWidget(sub_widget)
             self.sub_widgets.append(sub_widget)
             sub_widget.valueChanged.connect(self._on_sub_widget_changed)
+    
+    def _create_merged_widget(self):
+        """Create single merged widget for simple allOf"""
+        if self.merged_widget:
+            self.widget_layout.removeWidget(self.merged_widget)
+            self.merged_widget.setParent(None)
+            self.merged_widget.deleteLater()
+            
+        merged_schema = self.resolver.resolve_schema({
+            "allOf": self.all_of_schemas
+        })
         
-        layout.addWidget(container)
-        self.merged_widget = None  # Not used in complex mode
+        self.merged_widget = SchemaWidgetFactory.create_widget(
+            merged_schema,
+            self.resolver,
+            self.validator,
+            self.path
+        )
+        
+        self.widget_layout.addWidget(self.merged_widget)
+        self.merged_widget.valueChanged.connect(self.update_validation)
     
     def _on_sub_widget_changed(self):
         """Handle changes in sub-widgets"""
-        # Update other sub-widgets that might have conditionals
-        combined_value = self.get_combined_value()
+        if not hasattr(self, '_is_updating'):
+            self._is_updating = False
         
-        for widget in self.sub_widgets:
-            if isinstance(widget, ConditionalWidget):
-                widget.update_condition(combined_value)
-        
-        self.update_validation()
+        if self._is_updating:
+            return
+            
+        self._is_updating = True
+        try:
+            # Update other sub-widgets that might have conditionals
+            combined_value = self.get_combined_value()
+            for widget in self.sub_widgets:
+                if isinstance(widget, ConditionalWidget):
+                    widget.update_condition(combined_value)
+        finally:
+            self._is_updating = False
+            self.update_validation()
     
     def get_combined_value(self) -> Dict[str, Any]:
         """Get combined value from all sub-widgets"""
-        if hasattr(self, 'sub_widgets'):
-            combined = {}
+        combined = {}
+        if self.has_nested_compositions and self.sub_widgets:
             for widget in self.sub_widgets:
                 try:
                     value = widget.get_value()
                     if isinstance(value, dict):
                         combined.update(value)
-                except:
-                    pass
-            return combined
-        return {}
+                except Exception as e:
+                    print(f"Error getting combined value: {e}")
+        return combined
     
     def get_value(self) -> Any:
         if self.merged_widget:
             return self.merged_widget.get_value()
-        else:
-            return self.get_combined_value()
+        return self.get_combined_value()
     
     def set_value(self, value: Any):
+        """Set value with schema validation"""
+        if not isinstance(value, (dict, list)):
+            return
+            
         if self.merged_widget:
             self.merged_widget.set_value(value)
-        else:
-            # Set value on all sub-widgets
+        elif self.sub_widgets:
+            # Set value on active sub-widgets
             for widget in self.sub_widgets:
                 try:
                     widget.set_value(value)
-                except:
-                    pass
-
+                except Exception as e:
+                    print(f"Error setting sub-widget value: {e}")
+                    
 
 class ConditionalWidget(BaseFormWidget):
     """Enhanced conditional widget with deep nesting support"""
