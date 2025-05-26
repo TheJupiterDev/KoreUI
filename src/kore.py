@@ -941,17 +941,11 @@ class ArrayWidget(BaseFormWidget):
             
             layout.addWidget(header)
             
-            # Scrollable container for items
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            
             self.items_widget = QWidget()
             self.items_layout = QVBoxLayout(self.items_widget)
             self.items_layout.addStretch()
             
-            scroll.setWidget(self.items_widget)
-            layout.addWidget(scroll)
+            layout.addWidget(self.item_widgets)
             
             self.item_widgets = []
             
