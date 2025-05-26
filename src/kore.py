@@ -2040,7 +2040,7 @@ class JsonSchemaForm(QWidget):
 
         # Store Data Dictionary
         if data is not None:
-            schema["oprtionsData"] = data
+            schema["optionsData"] = data
         
         # Initialize components
         self.resolver = SchemaResolver(schema)
