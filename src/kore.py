@@ -969,16 +969,17 @@ class ArrayWidget(BaseFormWidget):
         layout = QVBoxLayout(self)
         
         # Add title/description if specified
-        if "title" in schema:
-            title_label = QLabel(schema["title"])
-            title_label.setProperty("class", "title")
-            layout.addWidget(title_label)
-            
-        if "description" in schema:
-            desc_label = QLabel(schema["description"])
-            desc_label.setProperty("class", "description")
-            desc_label.setWordWrap(True)
-            layout.addWidget(desc_label)
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+                
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
 
         self.items_schema = schema.get("items", {})
         self.min_items = schema.get("minItems", 0)
@@ -1218,20 +1219,17 @@ class ObjectWidget(BaseFormWidget):
         
         for prop_name, prop_schema in properties.items():
             prop_path = f"{path}.{prop_name}" if path else prop_name
-            
-            label_text = self._get_property_label(prop_name, prop_schema, prop_name in required)
-            label = QLabel(label_text)
-            
-            if prop_name in required:
-                label.setProperty("class", "required")
-                
-            if "description" in prop_schema:
-                desc_label = QLabel(prop_schema["description"])
-                desc_label.setStyleSheet("color: gray; font-size: 10px; font-style: italic; margin-bottom: 5px;")
-                desc_label.setWordWrap(True)
-                layout.addWidget(desc_label)
-                
-            layout.addWidget(label)
+            if "title" in prop_schema or "description" in prop_schema:
+                show_label = False
+            else:
+                show_label = True
+
+            if show_label:
+                label_text = self._get_property_label(prop_name, prop_schema, prop_name in required)
+                label = QLabel(label_text)
+                if prop_name in required:
+                    label.setProperty("class", "required")
+                layout.addWidget(label)
             
             # Create widget for property with safe value provider
             def make_value_provider():
