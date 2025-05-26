@@ -1,82 +1,118 @@
 {
-  "title": "Example Test Form",
-  "description": "A schema to test all major widget types.",
-  "type": "object",
-  "properties": {
-    "name": {
-      "type": "string",
-      "title": "Full Name",
-      "description": "Enter your full name."
-    },
-    "age": {
-      "type": "integer",
-      "title": "Age",
-      "minimum": 0,
-      "maximum": 120
-    },
-    "subscribe": {
-      "type": "boolean",
-      "title": "Subscribe to newsletter"
-    },
-    "favorite_color": {
-      "type": "string",
-      "title": "Favorite Color",
-      "enum": ["red", "green", "blue", "yellow"]
-    },
-    "hobbies": {
-      "type": "array",
-      "title": "Hobbies",
-      "description": "Select one or more hobbies.",
-      "items": {
-        "type": "string",
-        "enum": ["reading", "sports", "music", "travel", "coding"]
-      },
-      "uniqueItems": true,
-      "minItems": 1
-    },
-    "profile": {
-      "type": "object",
-      "title": "Profile",
-      "properties": {
-        "bio": {
-          "type": "string",
-          "title": "Bio",
-          "maxLength": 200
-        },
-        "website": {
-          "type": "string",
-          "title": "Website",
-          "format": "uri"
-        }
-      }
-    },
-    "contact_method": {
-      "title": "Preferred Contact Method",
-      "oneOf": [
-        {
-          "title": "Email",
-          "type": "object",
-          "properties": {
-            "email": {
-              "type": "string",
-              "format": "email"
+    "title": "Complex Form Test",
+    "description": "Tests lazy loading of widgets",
+    "type": "object",
+    "properties": {
+        "personalInfo": {
+            "type": "object",
+            "title": "Personal Information",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "title": "Full Name"
+                },
+                "age": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 120
+                },
+                "contact": {
+                    "type": "object",
+                    "properties": {
+                        "email": {
+                            "type": "string",
+                            "format": "email"
+                        },
+                        "phone": {
+                            "type": "string",
+                            "pattern": "^\\+?[1-9]\\d{1,14}$"
+                        }
+                    }
+                }
             }
-          },
-          "required": ["email"]
         },
-        {
-          "title": "Phone",
-          "type": "object",
-          "properties": {
-            "phone": {
-              "type": "string",
-              "pattern": "^[0-9\\-\\+]{9,15}$"
+        "preferences": {
+            "type": "object",
+            "title": "User Preferences",
+            "if": {
+                "properties": {
+                    "enableNotifications": {
+                        "const": true
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "enableNotifications": {
+                        "type": "boolean",
+                        "title": "Enable Notifications"
+                    },
+                    "notificationTypes": {
+                        "type": "array",
+                        "title": "Notification Types",
+                        "items": {
+                            "enum": ["email", "sms", "push"]
+                        },
+                        "minItems": 1
+                    },
+                    "frequency": {
+                        "type": "string",
+                        "enum": ["realtime", "daily", "weekly"]
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "enableNotifications": {
+                        "type": "boolean",
+                        "title": "Enable Notifications"
+                    }
+                }
             }
-          },
-          "required": ["phone"]
+        },
+        "dataSource": {
+            "title": "Data Source Configuration",
+            "oneOf": [
+                {
+                    "title": "Database",
+                    "type": "object",
+                    "properties": {
+                        "type": { "const": "database" },
+                        "host": { "type": "string" },
+                        "port": { "type": "integer" },
+                        "credentials": {
+                            "type": "object",
+                            "properties": {
+                                "username": { "type": "string" },
+                                "password": { "type": "string" }
+                            }
+                        }
+                    }
+                },
+                {
+                    "title": "API",
+                    "type": "object",
+                    "properties": {
+                        "type": { "const": "api" },
+                        "url": { "type": "string", "format": "uri" },
+                        "apiKey": { "type": "string" }
+                    }
+                }
+            ]
+        },
+        "tags": {
+            "type": "array",
+            "title": "Tags",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "color": { 
+                        "type": "string",
+                        "enum": ["red", "green", "blue", "yellow"]
+                    }
+                }
+            }
         }
-      ]
     }
-  },
-  "required": ["name", "age", "favorite_color", "hobbies"]
 }
