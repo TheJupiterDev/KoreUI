@@ -13,157 +13,6 @@ from urllib.parse import urlparse
 import ipaddress
 import email.utils
 
-MODERN_STYLESHEET = """
-QWidget {
-    font-family: 'Segoe UI', sans-serif;
-    font-size: 12px;
-    background-color: #ffffff;
-}
-
-QLabel {
-    color: #323130;
-    padding: 2px;
-}
-
-QLabel[class="title"] {
-    font-size: 18px;
-    font-weight: bold;
-    color: #201f1e;
-    margin-bottom: 10px;
-}
-
-QLabel[class="description"] {
-    color: #605e5c;
-    margin-bottom: 15px;
-}
-
-QLabel[class="error"] {
-    color: #a4262c;
-    font-size: 11px;
-    padding: 4px;
-}
-
-QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit {
-    padding: 6px;
-    border: 1px solid #8a8886;
-    border-radius: 4px;
-    background-color: #ffffff;
-}
-
-QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QTextEdit:focus {
-    border-color: #0078d4;
-    outline: none;
-}
-
-QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
-    background-color: #f3f2f1;
-    border-color: #c8c6c4;
-}
-
-QPushButton {
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    background-color: #0078d4;
-    color: white;
-    font-weight: 500;
-}
-
-QPushButton:hover {
-    background-color: #106ebe;
-}
-
-QPushButton:pressed {
-    background-color: #005a9e;
-}
-
-QPushButton:disabled {
-    background-color: #f3f2f1;
-    color: #a19f9d;
-}
-
-QCheckBox {
-    spacing: 8px;
-}
-
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    border: 1px solid #8a8886;
-    border-radius: 3px;
-}
-
-QCheckBox::indicator:checked {
-    background-color: #0078d4;
-    border-color: #0078d4;
-    image: url(checkmark.png);
-}
-
-QScrollArea {
-    border: none;
-}
-
-QScrollBar:vertical {
-    border: none;
-    background: #f3f2f1;
-    width: 10px;
-    margin: 0;
-}
-
-QScrollBar::handle:vertical {
-    background: #c8c6c4;
-    border-radius: 5px;
-    min-height: 20px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background: #a19f9d;
-}
-
-QGroupBox {
-    margin-top: 12px;
-    padding-top: 24px;
-    border: 1px solid #e1dfdd;
-    border-radius: 4px;
-}
-
-QGroupBox::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    padding: 0 3px;
-    color: #323130;
-}
-
-.array-item {
-    background-color: #faf9f8;
-    border: 1px solid #edebe9;
-    border-radius: 4px;
-    margin: 4px 0;
-    padding: 8px;
-}
-
-.array-index {
-    color: #605e5c;
-    font-size: 11px;
-}
-
-.remove-button {
-    background-color: #a4262c;
-    color: white;
-    border-radius: 2px;
-    padding: 2px;
-}
-
-.remove-button:hover {
-    background-color: #751d22;
-}
-
-.allof-separator {
-    color: #e1dfdd;
-    height: 1px;
-    margin: 8px 0;
-}
-"""
 
 
 class ValidationError:
@@ -725,6 +574,17 @@ class StringWidget(BaseFormWidget):
         
         layout = QVBoxLayout(self)
         
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
+
         # Determine widget type based on format
         format_type = schema.get("format", "")
         
@@ -834,6 +694,17 @@ class NumberWidget(BaseFormWidget):
         super().__init__(schema, resolver, validator, path)
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
         
         is_integer = schema.get("type") == "integer"
         
@@ -872,6 +743,17 @@ class BooleanWidget(BaseFormWidget):
         super().__init__(schema, resolver, validator, path)
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
         
         self.widget = QCheckBox()
         if "default" in schema:
@@ -896,6 +778,17 @@ class EnumWidget(BaseFormWidget):
         super().__init__(schema, resolver, validator, path)
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
         
         self.widget = QComboBox()
         self.widget.setEditable(False)
@@ -927,7 +820,7 @@ class EnumWidget(BaseFormWidget):
         layout.addWidget(self.widget)
         layout.addWidget(self.error_widget)
         
-        self.widget.selectionChanged.connect(self.update_validation)
+        self.widget.currentIndexChanged.connect(self.update_validation)
         
     def get_value(self) -> Any:
         return self.widget.currentData()
@@ -945,6 +838,17 @@ class ConstWidget(BaseFormWidget):
         super().__init__(schema, resolver, validator, path)
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
         
         self.const_value = schema["const"]
         self.widget = QLabel(str(self.const_value))
@@ -1403,8 +1307,18 @@ class OneOfWidget(BaseFormWidget):
         self.current_widget = None
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
         
-        # Enhanced selector with better option titles
         self.selector = QComboBox()
         
         options = schema["oneOf"]
@@ -1558,6 +1472,18 @@ class AnyOfWidget(BaseFormWidget):
         self.checkboxes = []
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
+
         layout.addWidget(QLabel("Select one or more options:"))
         
         options = schema["anyOf"]
@@ -1650,6 +1576,17 @@ class AllOfWidget(BaseFormWidget):
         super().__init__(schema, resolver, validator, path)
         
         layout = QVBoxLayout(self)
+
+        if path:
+            if "title" in schema:
+                title_label = QLabel(schema["title"])
+                title_label.setProperty("class", "title")
+                layout.addWidget(title_label)
+            if "description" in schema:
+                desc_label = QLabel(schema["description"])
+                desc_label.setProperty("class", "description")
+                desc_label.setWordWrap(True)
+                layout.addWidget(desc_label)
         
         # Check if any of the allOf schemas contain oneOf/anyOf
         self.has_nested_compositions = any(
@@ -2100,9 +2037,6 @@ class JsonSchemaForm(QWidget):
         
         self.setWindowTitle(title)
         self.setMinimumSize(800, 600)
-        
-        # Apply modern stylesheet
-        self.setStyleSheet(MODERN_STYLESHEET)
 
         # Store Data Dictionary
         if data is not None:

@@ -1,18 +1,82 @@
 {
-    "title": "Multi-Select Example",
-    "type": "object",
-    "properties": {
-        "colors": {
-            "type": "array",
-            "title": "Select Colors",
-            "description": "Choose one or more colors",
-            "items": {
-                "type": "string",
-                "enum": ["red", "green", "blue", "yellow", "purple", "orange"]
-            },
-            "uniqueItems": true,
-            "minItems": 1,
-            "maxItems": 3
+  "title": "Example Test Form",
+  "description": "A schema to test all major widget types.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "Full Name",
+      "description": "Enter your full name."
+    },
+    "age": {
+      "type": "integer",
+      "title": "Age",
+      "minimum": 0,
+      "maximum": 120
+    },
+    "subscribe": {
+      "type": "boolean",
+      "title": "Subscribe to newsletter"
+    },
+    "favorite_color": {
+      "type": "string",
+      "title": "Favorite Color",
+      "enum": ["red", "green", "blue", "yellow"]
+    },
+    "hobbies": {
+      "type": "array",
+      "title": "Hobbies",
+      "description": "Select one or more hobbies.",
+      "items": {
+        "type": "string",
+        "enum": ["reading", "sports", "music", "travel", "coding"]
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "profile": {
+      "type": "object",
+      "title": "Profile",
+      "properties": {
+        "bio": {
+          "type": "string",
+          "title": "Bio",
+          "maxLength": 200
+        },
+        "website": {
+          "type": "string",
+          "title": "Website",
+          "format": "uri"
         }
+      }
+    },
+    "contact_method": {
+      "title": "Preferred Contact Method",
+      "oneOf": [
+        {
+          "title": "Email",
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string",
+              "format": "email"
+            }
+          },
+          "required": ["email"]
+        },
+        {
+          "title": "Phone",
+          "type": "object",
+          "properties": {
+            "phone": {
+              "type": "string",
+              "pattern": "^[0-9\\-\\+]{9,15}$"
+            }
+          },
+          "required": ["phone"]
+        }
+      ]
     }
+  },
+  "required": ["name", "age", "favorite_color", "hobbies"]
 }
