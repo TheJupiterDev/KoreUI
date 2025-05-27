@@ -96,7 +96,7 @@ def test_schema_loading():
     """Test function to demonstrate schema loading"""
     try:
         # Test loading the comprehensive schema
-        schema = load_schema("test_schema.json")
+        schema = load_schema("example_schema.json")
         print(f"Successfully loaded schema with {len(schema.get('properties', {}))} root properties")
         
         # Print some basic info about the schema
