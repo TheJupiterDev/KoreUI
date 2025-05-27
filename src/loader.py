@@ -89,32 +89,3 @@ def load_schema_with_defaults(schema_path: Union[str, Path],
             print("Warning: Object schema without properties defined")
     
     return schema
-
-
-# Example usage and test function
-def test_schema_loading():
-    """Test function to demonstrate schema loading"""
-    try:
-        # Test loading the comprehensive schema
-        schema = load_schema("example_schema.json")
-        print(f"Successfully loaded schema with {len(schema.get('properties', {}))} root properties")
-        
-        # Print some basic info about the schema
-        if "properties" in schema:
-            print("Root properties:")
-            for prop_name in schema["properties"].keys():
-                print(f"  - {prop_name}")
-        
-        if "$defs" in schema:
-            print(f"Schema definitions: {list(schema['$defs'].keys())}")
-            
-        return schema
-        
-    except Exception as e:
-        print(f"Error loading schema: {e}")
-        return None
-
-
-if __name__ == "__main__":
-    # Test the function
-    test_schema_loading()
