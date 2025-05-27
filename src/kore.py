@@ -1183,7 +1183,9 @@ class ObjectWidget(BaseFormWidget):
                 # Handle dynamic keys from actual data
                 try:
                     existing_data = self.get_value()
+                    print(f"[Debug] Fetched value for pattern object: {existing_data}")
                 except Exception:
+                    print(f"[Debug] Failed to get value: {e}")
                     existing_data = {}
 
                 if not isinstance(existing_data, dict) or not existing_data:
@@ -1364,7 +1366,10 @@ class ObjectWidget(BaseFormWidget):
                 except Exception:
                     pass
                     
+            if not result and "default" in self.schema:
+                return self.schema["default"]
             return result
+
     
     def set_value(self, value: Dict[str, Any]):
         if not isinstance(value, dict):

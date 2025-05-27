@@ -126,6 +126,16 @@
             "type": "object",
             "title": "Effects",
             "description": "Map of effect components by type",
+            "default": {
+                " ": {
+                    "type": "minecraft:damage_protection",
+                    "damage_type": "minecraft:fall",
+                    "amount": {
+                    "base": 1,
+                    "per_level": 0.25
+                    }
+                }
+            },
             "properties": {
                 "^.*$": {
                     "oneOf": [
