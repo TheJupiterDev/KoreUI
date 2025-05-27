@@ -1181,38 +1181,42 @@ class ObjectWidget(BaseFormWidget):
 
             if is_pattern_key:
                 # Handle dynamic keys from actual data
-                existing_data = self.schema.get("default", {})  # fallback
                 try:
-                    # If data is already present, use that
                     existing_data = self.get_value()
                 except Exception:
-                    pass
+                    existing_data = {}
 
-                if isinstance(existing_data, dict):
-                    for dynamic_key, value in existing_data.items():
-                        prop_path = f"{path}.{dynamic_key}" if path else dynamic_key
-                        label = QLabel(f"Effect: {dynamic_key}")
-                        layout.addWidget(label)
+                if not isinstance(existing_data, dict) or not existing_data:
+                    print("[Debug] No data found for dynamic keys, skipping render.")
+                    continue
 
-                        def make_value_provider():
-                            return lambda: self.get_value()
+                for dynamic_key, value in existing_data.items():
+                    print(f"[Debug] Rendering dynamic key: {dynamic_key}")
+                    prop_path = f"{path}.{dynamic_key}" if path else dynamic_key
+                    label = QLabel(f"Effect: {dynamic_key}")
+                    layout.addWidget(label)
 
-                        prop_widget = SchemaWidgetFactory.create_widget(
-                            prop_schema, resolver, validator, prop_path,
-                            parent_value_provider=make_value_provider()
-                        )
+                    def make_value_provider():
+                        return lambda: self.get_value()
 
-                        prop_widget.set_value(value)
-                        layout.addWidget(prop_widget)
-                        self.property_widgets[dynamic_key] = prop_widget
+                    prop_widget = SchemaWidgetFactory.create_widget(
+                        prop_schema, resolver, validator, prop_path,
+                        parent_value_provider=make_value_provider()
+                    )
 
-                        if isinstance(prop_widget, ConditionalWidget):
-                            self.conditional_widgets.append(prop_widget)
+                    prop_widget.set_value(value)
+                    layout.addWidget(prop_widget)
+                    self.property_widgets[dynamic_key] = prop_widget
 
-                        prop_widget.valueChanged.connect(self._on_property_changed)
-                continue  # skip adding the ^.*$ as a literal key
+                    if isinstance(prop_widget, ConditionalWidget):
+                        self.conditional_widgets.append(prop_widget)
+
+                    prop_widget.valueChanged.connect(self._on_property_changed)
+
+                continue  # skip literal pattern key
+
             else:
-                # Normal property rendering
+                # Keep your existing else block untouched
                 prop_path = f"{path}.{prop_name}" if path else prop_name
                 show_label = "title" not in prop_schema and "description" not in prop_schema
 
