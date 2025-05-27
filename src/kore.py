@@ -2053,6 +2053,7 @@ class SchemaWidgetFactory:
             # Handle composition keywords BEFORE type resolution
             # Use original schema to preserve composition structure
             if "oneOf" in schema:
+                print(f"Creating OneOfWidget for schema at {path}")
                 return OneOfWidget(schema, resolver, validator, path)
                 
             if "anyOf" in schema:
