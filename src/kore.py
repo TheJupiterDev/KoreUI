@@ -16,7 +16,7 @@ import os
 
 
 
-class ValidationError:
+class ValidationError(Exception):
     """Custom validation error class (not an Exception)"""
     def __init__(self, message: str, path: str = "", schema_path: str = ""):
         self.message = message
