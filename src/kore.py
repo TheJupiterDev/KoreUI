@@ -1185,7 +1185,7 @@ class ObjectWidget(BaseFormWidget):
                     existing_data = self.get_value()
                     print(f"[Debug] Fetched value for pattern object: {existing_data}")
                 except Exception:
-                    print(f"[Debug] Failed to get value: {e}")
+                    print(f"[Debug] Failed to get value")
                     existing_data = {}
 
                 if not isinstance(existing_data, dict) or not existing_data:
