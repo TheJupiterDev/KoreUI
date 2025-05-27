@@ -1177,38 +1177,68 @@ class ObjectWidget(BaseFormWidget):
             layout.addWidget(empty_label)
         
         for prop_name, prop_schema in properties.items():
-            prop_path = f"{path}.{prop_name}" if path else prop_name
-            if "title" in prop_schema or "description" in prop_schema:
-                show_label = False
+            is_pattern_key = re.fullmatch(r"\^.*\$", prop_name)
+
+            if is_pattern_key:
+                # Handle dynamic keys from actual data
+                existing_data = self.schema.get("default", {})  # fallback
+                try:
+                    # If data is already present, use that
+                    existing_data = self.get_value()
+                except Exception:
+                    pass
+
+                if isinstance(existing_data, dict):
+                    for dynamic_key, value in existing_data.items():
+                        prop_path = f"{path}.{dynamic_key}" if path else dynamic_key
+                        label = QLabel(f"Effect: {dynamic_key}")
+                        layout.addWidget(label)
+
+                        def make_value_provider():
+                            return lambda: self.get_value()
+
+                        prop_widget = SchemaWidgetFactory.create_widget(
+                            prop_schema, resolver, validator, prop_path,
+                            parent_value_provider=make_value_provider()
+                        )
+
+                        prop_widget.set_value(value)
+                        layout.addWidget(prop_widget)
+                        self.property_widgets[dynamic_key] = prop_widget
+
+                        if isinstance(prop_widget, ConditionalWidget):
+                            self.conditional_widgets.append(prop_widget)
+
+                        prop_widget.valueChanged.connect(self._on_property_changed)
+                continue  # skip adding the ^.*$ as a literal key
             else:
-                show_label = True
+                # Normal property rendering
+                prop_path = f"{path}.{prop_name}" if path else prop_name
+                show_label = "title" not in prop_schema and "description" not in prop_schema
 
-            if show_label:
-                label_text = self._get_property_label(prop_name, prop_schema, prop_name in required)
-                label = QLabel(label_text)
-                if prop_name in required:
-                    label.setProperty("class", "required")
-                layout.addWidget(label)
-            
-            # Create widget for property with safe value provider
-            def make_value_provider():
-                return lambda: self.get_value()
+                if show_label:
+                    label_text = self._get_property_label(prop_name, prop_schema, prop_name in required)
+                    label = QLabel(label_text)
+                    if prop_name in required:
+                        label.setProperty("class", "required")
+                    layout.addWidget(label)
 
-            prop_widget = SchemaWidgetFactory.create_widget(
-                prop_schema, resolver, validator, prop_path,
-                parent_value_provider=make_value_provider()
-            )
+                def make_value_provider():
+                    return lambda: self.get_value()
 
-            layout.addWidget(prop_widget)
-            self.property_widgets[prop_name] = prop_widget
-            
-            # Track conditional widgets
-            if isinstance(prop_widget, ConditionalWidget):
-                self.conditional_widgets.append(prop_widget)
-            
-            prop_widget.valueChanged.connect(self._on_property_changed)
-        
-        layout.addWidget(self.error_widget)
+                prop_widget = SchemaWidgetFactory.create_widget(
+                    prop_schema, resolver, validator, prop_path,
+                    parent_value_provider=make_value_provider()
+                )
+
+                layout.addWidget(prop_widget)
+                self.property_widgets[prop_name] = prop_widget
+
+                if isinstance(prop_widget, ConditionalWidget):
+                    self.conditional_widgets.append(prop_widget)
+
+                prop_widget.valueChanged.connect(self._on_property_changed)
+
         
         # Set default values
         if "default" in schema and isinstance(schema["default"], dict):
