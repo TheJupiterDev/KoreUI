@@ -1551,7 +1551,6 @@ class OneOfWidget(BaseFormWidget):
                 self.current_widget.set_value(value)
 
 
-
 class AnyOfWidget(BaseFormWidget):
     """Widget for anyOf schema composition"""
     
