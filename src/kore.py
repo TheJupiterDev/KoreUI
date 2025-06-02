@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, QDate, QTime, QDateTime, Signal
 from PySide6.QtGui import QRegularExpressionValidator, QStandardItem, QStandardItemModel
 import json
 import re
+import traceback
 from typing import Any, Dict, List, Optional, Union, Callable
 from urllib.parse import urlparse
 import ipaddress
@@ -1268,41 +1269,39 @@ class ObjectWidget(BaseFormWidget):
             self.update_validation()
 
     def _get_safe_value(self, exclude_path: str) -> Dict[str, Any]:
-        """Get value with improved nested handling"""
-        if self._update_count >= self.max_updates:
-            return {}
-            
-        self._update_count += 1
-        try:
-            result = {}
-            # First collect all non-conditional values
-            for prop_name, widget in self.property_widgets.items():
-                if widget.path != exclude_path and not isinstance(widget, ConditionalWidget):
-                    try:
-                        value = widget.get_value()
-                        if value is not None:
+        result = {}
+        for prop_name, widget in self.property_widgets.items():
+            if widget is None or not hasattr(widget, 'get_value'):
+                continue
+                
+            try:
+                # Check if widget is properly initialized
+                if not widget.isVisible() and isinstance(widget, (OneOfWidget, AnyOfWidget)):
+                    continue
+                    
+                value = widget.get_value()
+                if value is not None:
+                    # Filter keys that are actually in the current schema
+                    if prop_name in self.schema.get("properties", {}):
+                        prop_schema = self.schema["properties"][prop_name]
+
+                        # Handle conditional schemas
+                        if "if" in prop_schema and isinstance(widget, ConditionalWidget):
+                            try:
+                                active_value = value
+                                allowed_keys = set(widget._current_schema.get("properties", {}).keys()) if widget._current_schema else set()
+                                if isinstance(active_value, dict):
+                                    result[prop_name] = active_value
+                            except Exception:
+                                pass
+                        else:
                             result[prop_name] = value
-                    except Exception as e:
-                        print(f"Error getting value for {prop_name}: {e}")
-                        
-            # Then handle conditionals in dependency order
-            for widget in sorted(self.conditional_widgets, key=lambda w: len(w.path.split('.'))):
-                if widget.path != exclude_path:
-                    try:
-                        value = widget.get_value()
-                        if value is not None:
-                            # Split path to handle nested properties
-                            path_parts = widget.path.split('.')
-                            current_dict = result
-                            for part in path_parts[:-1]:
-                                current_dict = current_dict.setdefault(part, {})
-                            current_dict[path_parts[-1]] = value
-                    except Exception as e:
-                        print(f"Error getting conditional value for {widget.path}: {e}")
-                        
-            return result
-        finally:
-            self._update_count -= 1
+            except Exception:
+                pass
+                
+        if not result and hasattr(self, 'schema') and "default" in self.schema:
+            return self.schema["default"]
+        return result
     
     def _get_property_label(self, prop_name: str, prop_schema: Dict[str, Any], is_required: bool) -> str:
         """Generate a meaningful label for a property"""
@@ -1366,8 +1365,8 @@ class ObjectWidget(BaseFormWidget):
                 except Exception:
                     pass
                     
-            if not result and "default" in schema:
-                return schema["default"]
+            if not result and "default" in self.schema:
+                return self.schema["default"]
             return result
 
     
@@ -1961,63 +1960,83 @@ class ConditionalWidget(BaseFormWidget):
 class SchemaWidgetFactory:
     """
     Enhanced factory for creating widgets from JSON Schema definitions
-    Supports full Draft 2020-12 specification
+    Supports full draft-v7 specification
     """
     
     @staticmethod
     def create_widget(schema: Dict[str, Any], resolver: SchemaResolver, 
-                 validator: SchemaValidator, path: str = "", 
-                 parent_value_provider: Optional[Callable[[], Any]] = None) -> BaseFormWidget:
+                    validator: SchemaValidator, path: str = "", 
+                    parent_value_provider: Optional[Callable[[], Any]] = None) -> BaseFormWidget:
         try:
+            print("\n=== Widget Creation Started ===")
+            print(f"Creating widget for path: {path}")
+            print(f"Input schema: {json.dumps(schema, indent=2)}")
+            
             # Resolve schema references
             resolved_schema = resolver.resolve_schema(schema, path)
-            
-            # Print debug info
-            print(f"Creating widget for path: {path}")
+            print(f"Resolved schema: {json.dumps(resolved_schema, indent=2)}")
             print(f"Schema type: {resolved_schema.get('type')}")
-            print(f"Schema properties: {resolved_schema.get('properties', {}).keys()}")
             
-            # Handle enum values BEFORE type checks
+            # Handle base type first
+            schema_type = resolved_schema.get("type")
+            
+            # If it's the root object, create ObjectWidget first
+            if schema_type == "object" and "properties" in resolved_schema:
+                print("Creating root ObjectWidget")
+                return ObjectWidget(resolved_schema, resolver, validator, path)
+                
+            # Handle enum values
             if "enum" in resolved_schema:
+                print(f"Creating EnumWidget with values: {resolved_schema['enum']}")
                 return EnumWidget(resolved_schema, resolver, validator, path)
             
-            # Handle conditional schemas
-            if "if" in resolved_schema:
+            # Handle conditional schemas (only for non-root objects)
+            if "if" in resolved_schema and path:
+                print(f"Creating ConditionalWidget with if condition: {resolved_schema['if']}")
                 return ConditionalWidget(resolved_schema, resolver, validator, path, parent_value_provider)
-            
-            # Handle basic types
-            schema_type = resolved_schema.get("type", "object")
-            
-            if schema_type == "object":
-                return ObjectWidget(resolved_schema, resolver, validator, path)
-            elif schema_type == "string":
-                return StringWidget(resolved_schema, resolver, validator, path)
-            elif schema_type in ["number", "integer"]:
-                return NumberWidget(resolved_schema, resolver, validator, path)
-            elif schema_type == "boolean":
-                return BooleanWidget(resolved_schema, resolver, validator, path)
-            elif schema_type == "array":
-                return ArrayWidget(resolved_schema, resolver, validator, path)
             
             # Handle const values
             if "const" in resolved_schema:
+                print(f"Creating ConstWidget with value: {resolved_schema['const']}")
                 return ConstWidget(resolved_schema, resolver, validator, path)
             
             # Handle composition keywords
             if "oneOf" in resolved_schema:
+                print(f"Creating OneOfWidget with {len(resolved_schema['oneOf'])} options")
                 return OneOfWidget(resolved_schema, resolver, validator, path)
             if "anyOf" in resolved_schema:
+                print(f"Creating AnyOfWidget with {len(resolved_schema['anyOf'])} options")
                 return AnyOfWidget(resolved_schema, resolver, validator, path)
             if "allOf" in resolved_schema:
+                print(f"Creating AllOfWidget with {len(resolved_schema['allOf'])} schemas")
                 return AllOfWidget(resolved_schema, resolver, validator, path)
         
+            # Handle other basic types
+            if schema_type == "string":
+                print(f"Creating StringWidget")
+                return StringWidget(resolved_schema, resolver, validator, path)
+            elif schema_type in ["number", "integer"]:
+                print(f"Creating NumberWidget")
+                return NumberWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "boolean":
+                print(f"Creating BooleanWidget")
+                return BooleanWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "array":
+                print(f"Creating ArrayWidget")
+                return ArrayWidget(resolved_schema, resolver, validator, path)
+            
             # Default to string widget if no other match
+            print("No matching widget type found, defaulting to StringWidget")
             return StringWidget(resolved_schema, resolver, validator, path)
             
         except Exception as e:
+            print("\n=== Widget Creation Error ===")
             print(f"Error creating widget for schema at {path}: {e}")
+            print(f"Stack trace: {traceback.format_exc()}")
             return StringWidget({"type": "string", "readOnly": True, 
-                         "title": f"Error: {str(e)}"}, resolver, validator, path)
+                    "title": f"Error: {str(e)}"}, resolver, validator, path)
+        finally:
+            print("=== Widget Creation Completed ===\n")
 
 class JsonSchemaForm(QWidget):
     """Main form widget that renders a complete JSON Schema"""
