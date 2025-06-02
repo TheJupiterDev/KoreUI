@@ -1,4 +1,5 @@
 import sys
+import json
 from PySide6.QtWidgets import QApplication, QScrollArea, QVBoxLayout, QWidget
 
 from src.kore import JsonSchemaForm
@@ -9,6 +10,7 @@ def main():
     try:
         # Load the schema
         schema = load_schema('example_schema.json')
+        print("Loaded schema:", json.dumps(schema, indent=2))
         
         # Create the application
         app = QApplication(sys.argv)

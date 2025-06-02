@@ -1105,7 +1105,7 @@ class ArrayWidget(BaseFormWidget):
             remove_button = layout.itemAt(2).widget()
             if isinstance(remove_button, QPushButton):
                 remove_button.clicked.disconnect()
-                remove_button.clicked.connect(lambda checked, idx=i: self.remove_item(idx))
+                remove_button.clicked.connect(lambda: self.remove_item(i))
     
     def update_controls(self):
         """Update button states based on constraints"""
@@ -1366,8 +1366,8 @@ class ObjectWidget(BaseFormWidget):
                 except Exception:
                     pass
                     
-            if not result and "default" in self.schema:
-                return self.schema["default"]
+            if not result and "default" in schema:
+                return schema["default"]
             return result
 
     
@@ -1807,16 +1807,15 @@ class ConditionalWidget(BaseFormWidget):
         self._create_default_widget()
 
     def _get_parent_value(self) -> Any:
-        """Safely get parent value with recursion protection"""
-        if self._parent_value_provider and self._update_count < self.max_updates:
-            self._update_count += 1
+        """Get the parent data for condition evaluation."""
+        if self._parent_value_provider:
             try:
-                return self._parent_value_provider()
+                parent_data = self._parent_value_provider()
+                print(f"Parent data: {parent_data}")
+                return parent_data
             except Exception as e:
-                print(f"Error getting parent value: {e}")
-            finally:
-                self._update_count -= 1
-        return None
+                print(f"Error getting parent data: {e}")
+        return {}
 
     def _create_default_widget(self):
         """Create initial widget with better schema selection"""
@@ -1841,30 +1840,20 @@ class ConditionalWidget(BaseFormWidget):
         return self.then_schema if self.then_schema else self.else_schema
 
     def _evaluate_condition(self, data: Any) -> Optional[bool]:
-        """Improved condition evaluation with better missing field handling"""
+        """Evaluate the condition in the 'if' schema."""
         if not self.if_schema:
-            return True
-            
+            return None  # No condition to evaluate
+
         try:
-            # Ensure we have a dict to work with
-            eval_data = data.copy() if isinstance(data, dict) else {"value": data}
-            
-            # Handle missing required fields
-            if "required" in self.if_schema:
-                required_fields = self.if_schema["required"]
-                missing_fields = [f for f in required_fields if f not in eval_data]
-                if missing_fields:
-                    return False  # Changed from None to False for clearer state handling
-            
-            # Validate against if schema
-            temp_validator = SchemaValidator(self.resolver)
-            validation_errors = temp_validator.validate(eval_data, self.if_schema)
-            return len(validation_errors) == 0
-            
+            # Validate the data against the 'if' schema
+            condition_errors = self.validator.validate(data, self.if_schema)
+            condition_met = not bool(condition_errors)
+            print(f"Condition evaluated: {condition_met}, Data: {data}")
+            return condition_met
         except Exception as e:
-            print(f"Error evaluating condition at {self.path}: {e}")
-            return False  # Changed from None to False for clearer state handling
-        
+            print(f"Error evaluating condition: {e}")
+            return None
+
     def validate_value(self) -> List[ValidationError]:
         """Override validation to only validate the active schema"""
         try:
@@ -1879,56 +1868,24 @@ class ConditionalWidget(BaseFormWidget):
             return [ValidationError(str(e), self.path)]
 
     def update_condition(self, parent_data: Any = None):
-        """Enhanced condition update with better state management"""
-        if self._is_updating or self._update_count >= self.max_updates:
+        """Update the active schema based on the condition."""
+        if self._is_updating:
             return
 
         self._is_updating = True
-        self._update_count += 1
-
         try:
-            if parent_data is None:
-                parent_data = self._get_parent_value() or {}
+            # Get the parent data (e.g., the current form data)
+            parent_data = parent_data or self._get_parent_value()
+            condition_met = self._evaluate_condition(parent_data)
 
-            current_data = dict(parent_data) if isinstance(parent_data, dict) else {"value": parent_data}
-
-            # Compare states using schema-aware comparison
-            current_state = self._get_state_hash(current_data)
-            if current_state == self._schema_state:
-                return
-
-            self._schema_state = current_state
-            self._last_parent_data = current_data
-
-            # Evaluate condition with improved handling
-            condition_met = self._evaluate_condition(current_data)
-            if condition_met != self._last_condition_result:
-                self._last_condition_result = condition_met
-                target_schema = self._select_target_schema(condition_met)
-                # Preserve the previous value, if any
-                old_value = self.get_value()
-
-                if target_schema != self._current_schema:
-                    self._current_schema = target_schema
-                    self._create_widget_for_schema(target_schema)
-                    try:
-                        # Check if old_value validates with the new schema
-                        new_errors = self.validator.validate(old_value, target_schema, self.path) if old_value is not None else ["No value"]
-                        if old_value is not None and not new_errors:
-                            self.active_widget.set_value(old_value)
-                        else:
-                            # Clear value (or you can supply a default) if it doesn't conform
-                            self.active_widget.set_value("")
-                    except Exception as e:
-                        print(f"Error during schema switch/set_value at {self.path}: {e}")
-                print(f"Switching schema at {self.path}: condition_met={condition_met}")
-
+            # Select the appropriate schema
+            target_schema = self._select_target_schema(condition_met)
+            print(f"Switching to schema: {target_schema}")
+            self._create_widget_for_schema(target_schema)
         except Exception as e:
-            print(f"Exception in update_condition at {self.path}: {e}")
+            print(f"Error updating condition: {e}")
         finally:
             self._is_updating = False
-            self._update_count -= 1
-            self.update_validation()
 
     def _create_widget_for_schema(self, schema: Dict[str, Any]):
         """Create widget with better cleanup"""
@@ -2009,230 +1966,132 @@ class SchemaWidgetFactory:
     
     @staticmethod
     def create_widget(schema: Dict[str, Any], resolver: SchemaResolver, 
-                    validator: SchemaValidator, path: str = "", 
-                    parent_value_provider: Optional[Callable[[], Any]] = None) -> BaseFormWidget:
-        """Create appropriate widget for schema with better error handling"""
-        
+                 validator: SchemaValidator, path: str = "", 
+                 parent_value_provider: Optional[Callable[[], Any]] = None) -> BaseFormWidget:
         try:
-            # Reset creation depth at top level
-            if not path:
-                resolver.reset_creation_depth()
+            # Resolve schema references
+            resolved_schema = resolver.resolve_schema(schema, path)
             
-            # Track creation depth
-            resolver._creation_depth += 1
-            if resolver._creation_depth > 20:
-                return ConstWidget(
-                    {"const": "Maximum widget creation depth exceeded"},
-                    resolver,
-                    validator,
-                    path
-                )
+            # Print debug info
+            print(f"Creating widget for path: {path}")
+            print(f"Schema type: {resolved_schema.get('type')}")
+            print(f"Schema properties: {resolved_schema.get('properties', {}).keys()}")
             
-            # Handle boolean schemas
-            if isinstance(schema, bool):
-                schema = {"type": "object"} if schema else {"not": {}}
-                
-            if not isinstance(schema, dict):
-                return ConstWidget({"const": "Invalid schema"}, resolver, validator, path)
-            
-            # Handle if/then/else conditionals FIRST (highest priority)
-            if "if" in schema:
-                return ConditionalWidget(schema, resolver, validator, path, parent_value_provider)
-            
-            # Resolve schema for other cases
-            resolved_schema = resolver.resolve_schema(schema)
-            
-            # Handle const
-            if "const" in resolved_schema:
-                return ConstWidget(resolved_schema, resolver, validator, path)
-                
-            # Handle enum
+            # Handle enum values BEFORE type checks
             if "enum" in resolved_schema:
                 return EnumWidget(resolved_schema, resolver, validator, path)
-                
-            # Handle composition keywords BEFORE type resolution
-            # Use original schema to preserve composition structure
-            if "oneOf" in schema:
-                print(f"Creating OneOfWidget for schema at {path}")
-                return OneOfWidget(schema, resolver, validator, path)
-                
-            if "anyOf" in schema:
-                return AnyOfWidget(schema, resolver, validator, path)
-                
-            if "allOf" in schema:
-                return AllOfWidget(schema, resolver, validator, path)
-                
-            # Handle type-based widgets
-            schema_type = resolved_schema.get("type")
             
-            if schema_type == "string":
+            # Handle conditional schemas
+            if "if" in resolved_schema:
+                return ConditionalWidget(resolved_schema, resolver, validator, path, parent_value_provider)
+            
+            # Handle basic types
+            schema_type = resolved_schema.get("type", "object")
+            
+            if schema_type == "object":
+                return ObjectWidget(resolved_schema, resolver, validator, path)
+            elif schema_type == "string":
                 return StringWidget(resolved_schema, resolver, validator, path)
-            elif schema_type in ["integer", "number"]:
+            elif schema_type in ["number", "integer"]:
                 return NumberWidget(resolved_schema, resolver, validator, path)
             elif schema_type == "boolean":
                 return BooleanWidget(resolved_schema, resolver, validator, path)
             elif schema_type == "array":
                 return ArrayWidget(resolved_schema, resolver, validator, path)
-            elif schema_type == "object":
-                return ObjectWidget(resolved_schema, resolver, validator, path)
-            elif schema_type == "null":
-                return ConstWidget({"const": None}, resolver, validator, path)
-                
-            # Handle multiple types
-            if isinstance(schema_type, list):
-                type_schemas = []
-                for t in schema_type:
-                    type_schema = dict(resolved_schema)
-                    type_schema["type"] = t
-                    type_schemas.append(type_schema)
-                multi_type_schema = {"oneOf": type_schemas}
-                return OneOfWidget(multi_type_schema, resolver, validator, path)
             
-            # Better fallback for schemas without explicit type
-            if not schema_type:
-                # Try to infer from other properties
-                if "properties" in resolved_schema:
-                    inferred_schema = dict(resolved_schema)
-                    inferred_schema["type"] = "object"
-                    return ObjectWidget(inferred_schema, resolver, validator, path)
-                elif "items" in resolved_schema:
-                    inferred_schema = dict(resolved_schema)
-                    inferred_schema["type"] = "array"
-                    return ArrayWidget(inferred_schema, resolver, validator, path)
-                elif "enum" in resolved_schema:
-                    return EnumWidget(resolved_schema, resolver, validator, path)
-                else:
-                    # Default to string input
-                    return StringWidget({"type": "string"}, resolver, validator, path)
-                    
+            # Handle const values
+            if "const" in resolved_schema:
+                return ConstWidget(resolved_schema, resolver, validator, path)
+            
+            # Handle composition keywords
+            if "oneOf" in resolved_schema:
+                return OneOfWidget(resolved_schema, resolver, validator, path)
+            if "anyOf" in resolved_schema:
+                return AnyOfWidget(resolved_schema, resolver, validator, path)
+            if "allOf" in resolved_schema:
+                return AllOfWidget(resolved_schema, resolver, validator, path)
+        
+            # Default to string widget if no other match
+            return StringWidget(resolved_schema, resolver, validator, path)
+            
         except Exception as e:
             print(f"Error creating widget for schema at {path}: {e}")
-            error_schema = {"const": f"Schema Error: {str(e)}"}
-            return ConstWidget(error_schema, resolver, validator, path)
-        finally:
-            # Always decrease creation depth when exiting
-            resolver._creation_depth -= 1
-        
-        # Final fallback - should rarely reach here now
-        return StringWidget({"type": "string", "title": "Unknown Schema"}, resolver, validator, path)
-
+            return StringWidget({"type": "string", "readOnly": True, 
+                         "title": f"Error: {str(e)}"}, resolver, validator, path)
 
 class JsonSchemaForm(QWidget):
-    """
-    Main JSON Schema form with full Draft 2020-12 support
-    """
+    """Main form widget that renders a complete JSON Schema"""
     
-    def __init__(self, schema: Dict[str, Any], data: Dict[str, any] = None, title: str = "JSON Schema Form", toolbar: bool = False):
-        super().__init__()
-        
-        self.setWindowTitle(title)
-        self.setMinimumSize(800, 600)
-
-        # Store Data Dictionary
-        if data is not None:
-            schema["optionsData"] = data
+    def __init__(self, schema: Dict[str, Any], parent: Optional[QWidget] = None):
+        super().__init__(parent)
         
         # Initialize components
+        self.schema = schema
         self.resolver = SchemaResolver(schema)
         self.validator = SchemaValidator(self.resolver)
         
-        # Main layout with better spacing
+        # Create main layout
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
         
-        # Title
+        # Add title if present
         if "title" in schema:
             title_label = QLabel(schema["title"])
-            title_label.setProperty("class", "title")
+            title_label.setProperty("class", "form-title")
+            title_font = title_label.font()
+            title_font.setPointSize(14)
+            title_font.setBold(True)
+            title_label.setFont(title_font)
             layout.addWidget(title_label)
-            
-        # Description
+        
+        # Add description if present
         if "description" in schema:
             desc_label = QLabel(schema["description"])
-            desc_label.setProperty("class", "description")
+            desc_label.setProperty("class", "form-description")
             desc_label.setWordWrap(True)
             layout.addWidget(desc_label)
-            
-        # Form widget in scroll area
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        form_container = QWidget()
-        form_layout = QVBoxLayout(form_container)
-        
+        # Create the main form widget
         self.form_widget = SchemaWidgetFactory.create_widget(
             schema, self.resolver, self.validator
         )
-        form_layout.addWidget(self.form_widget)
-        form_layout.addStretch()
+        layout.addWidget(self.form_widget)
         
-        scroll_area.setWidget(form_container)
-        layout.addWidget(scroll_area)
+        # Add validation status display (initially hidden)
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        self.status_label.hide()  # Hide initially
+        layout.addWidget(self.status_label)
         
-        # Modern button bar
-        if toolbar:
-            button_bar = QWidget()
-            button_layout = QHBoxLayout(button_bar)
-            
-            self.validate_button = QPushButton("🔍 Validate")
-            self.validate_button.clicked.connect(self.validate_form)
-            
-            self.get_data_button = QPushButton("📋 Get Data")
-            self.get_data_button.clicked.connect(self.show_data)
-            
-            self.clear_button = QPushButton("🗑️ Clear")
-            self.clear_button.clicked.connect(self.clear_form)
-            
-            button_layout.addStretch()
-            button_layout.addWidget(self.validate_button)
-            button_layout.addWidget(self.get_data_button)
-            button_layout.addWidget(self.clear_button)
-            
-            layout.addWidget(button_bar)
-        
-    def get_form_data(self) -> Any:
-        """Get current form data"""
-        return self.form_widget.get_value()
-        
-    def set_form_data(self, data: Any):
-        """Set form data"""
-        self.form_widget.set_value(data)
-        
-    def validate_form(self):
-        """Validate entire form and show results in a message box"""
-        errors = self.form_widget.validate_value()
-        self.form_widget.update_validation()
+        # Connect signals
+        if hasattr(self.form_widget, 'valueChanged'):
+            self.form_widget.valueChanged.connect(self._on_value_changed)
+
+    def _on_value_changed(self):
+        """Handle value changes and update validation status"""
+        errors = self.validate()
         if errors:
-            msg = "\n".join([f"• {e.message}" for e in errors])
-            QMessageBox.warning(self, "Validation Errors", msg)
+            error_text = "\n".join([f"• {error.message}" for error in errors[:3]])
+            if len(errors) > 3:
+                error_text += f"\n... and {len(errors) - 3} more errors"
+            self.status_label.setText(error_text)
+            self.status_label.setStyleSheet("color: red;")
         else:
-            QMessageBox.information(self, "Validation", "No validation errors found.")
+            self.status_label.setText("Form is valid")
+            self.status_label.setStyleSheet("color: green;")
 
-    def show_data(self):
-        """Show current form data in a message box"""
-        try:
-            data = self.get_form_data()
-            json_text = json.dumps(data, indent=2, default=str)
-            QMessageBox.information(self, "Form Data", json_text)
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to get form data: {e}")
+    def get_value(self) -> Any:
+        """Get the current form data"""
+        if hasattr(self.form_widget, 'get_value'):
+            return self.form_widget.get_value()
+        return None
 
-    def clear_form(self):
-        """Clear all form data with confirmation"""
-        reply = QMessageBox.question(
-            self,
-            "Clear Form",
-            "Are you sure you want to clear all form data?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            old_widget = self.form_widget
-            self.form_widget = SchemaWidgetFactory.create_widget(
-                self.resolver.root_schema, self.resolver, self.validator
-            )
-            layout = self.layout()
-            layout.replaceWidget(old_widget, self.form_widget)
-            old_widget.deleteLater()
+    def set_value(self, value: Any):
+        """Set form data"""
+        if hasattr(self.form_widget, 'set_value'):
+            self.form_widget.set_value(value)
+
+    def validate(self) -> List[ValidationError]:
+        """Validate the current form data"""
+        return self.validator.validate(self.get_value(), self.schema)
